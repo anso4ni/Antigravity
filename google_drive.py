@@ -112,8 +112,8 @@ def has_valid_token(token_path=None):
 
 def get_oauth_credentials(client_secrets_path, token_path=None):
     """
-    取得 OAuth2 使用者憑證，自動處理 token 快取與刷新。
-    若無有效 token，會開啟瀏覽器讓使用者登入並同意授權。
+    本地端：取得 OAuth2 憑證，自動處理 token 快取與刷新。
+    若無有效 token，會開啟瀏覽器讓使用者登入。
     """
     if not OAUTH_AVAILABLE:
         raise ImportError("請先安裝: pip install google-auth-oauthlib")
@@ -146,6 +146,68 @@ def get_oauth_credentials(client_secrets_path, token_path=None):
             f.write(creds.to_json())
 
     return creds
+
+
+# ── 雲端 Web OAuth 流程 ──────────────────────────────────────────────────────
+
+def get_web_auth_url(client_secrets_dict, redirect_uri):
+    """
+    雲端：產生 Google OAuth 授權 URL（Web 應用程式流程）。
+    Returns:
+        (auth_url, state, flow)
+    """
+    if not OAUTH_AVAILABLE:
+        raise ImportError("請先安裝: pip install google-auth-oauthlib")
+    from google_auth_oauthlib.flow import Flow
+    flow = Flow.from_client_config(
+        client_secrets_dict,
+        scopes=OAUTH_SCOPES,
+        redirect_uri=redirect_uri,
+    )
+    auth_url, state = flow.authorization_url(access_type="offline", prompt="consent")
+    return auth_url, state, flow
+
+
+def exchange_web_auth_code(client_secrets_dict, code, state, redirect_uri):
+    """
+    雲端：用授權碼換取 credentials。
+    Returns:
+        google.oauth2.credentials.Credentials
+    """
+    if not OAUTH_AVAILABLE:
+        raise ImportError("請先安裝: pip install google-auth-oauthlib")
+    from google_auth_oauthlib.flow import Flow
+    import os as _os
+    _os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    flow = Flow.from_client_config(
+        client_secrets_dict,
+        scopes=OAUTH_SCOPES,
+        redirect_uri=redirect_uri,
+        state=state,
+    )
+    flow.fetch_token(code=code)
+    return flow.credentials
+
+
+def credentials_from_dict(creds_dict):
+    """從 dict（token JSON）還原 OAuthCredentials"""
+    import json as _json
+    if isinstance(creds_dict, str):
+        creds_dict = _json.loads(creds_dict)
+    return OAuthCredentials.from_authorized_user_info(creds_dict, OAUTH_SCOPES)
+
+
+def credentials_to_dict(creds):
+    """將 OAuthCredentials 序列化為 dict，方便存入 session_state"""
+    import json as _json
+    return _json.loads(creds.to_json())
+
+
+def make_gspread_client(creds):
+    """從 credentials 建立 gspread.Client"""
+    if not GSPREAD_AVAILABLE:
+        raise ImportError("請先安裝: pip install gspread")
+    return gspread.authorize(creds)
 
 
 def authenticate_oauth(client_secrets_path, token_path=None):

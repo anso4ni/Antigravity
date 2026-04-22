@@ -177,6 +177,37 @@ def get_custom_css():
     """
 
 
+def _is_cloud_mode():
+    """判斷是否在 Streamlit Cloud 雲端模式（secrets 中有 google_oauth）"""
+    try:
+        return "google_oauth" in st.secrets
+    except Exception:
+        return False
+
+
+def _get_cloud_oauth_secrets():
+    """取得雲端 OAuth 設定，回傳 (client_secrets_dict, redirect_uri)"""
+    import json as _json
+    sec = st.secrets["google_oauth"]
+    raw = sec.get("client_secrets_json", "")
+    client_secrets_dict = _json.loads(raw) if isinstance(raw, str) else dict(raw)
+    redirect_uri = sec.get("redirect_uri", "")
+    return client_secrets_dict, redirect_uri
+
+
+def _fetch_google_email(creds):
+    """從 credentials 取得使用者 email"""
+    try:
+        from google.auth.transport.requests import AuthorizedSession
+        session = AuthorizedSession(creds)
+        resp = session.get("https://www.googleapis.com/oauth2/v1/userinfo")
+        if resp.status_code == 200:
+            return resp.json().get("email", "")
+    except Exception:
+        pass
+    return ""
+
+
 def render_google_status():
     """渲染 Google 雲端連線狀態（從 session_state 讀取 OAuth 登入狀態）"""
     email = st.session_state.get("google_email", "")
@@ -230,8 +261,33 @@ def _build_sparkline_svg(data_points, color, width=60, height=28):
 
 def render_market_indices(cfg):
     """渲染頂部即時指數區塊（含 Google 登入圖示）"""
-    # 若本地有有效 token 且 session 尚未還原，自動靜默重新登入
-    if "google_client" not in st.session_state and google_drive.has_valid_token():
+
+    # ── 雲端模式：處理 Google OAuth callback（?code=xxx 回傳） ──────────
+    if _is_cloud_mode() and "google_client" not in st.session_state:
+        params = st.query_params
+        if "code" in params:
+            try:
+                with st.spinner("正在完成 Google 授權…"):
+                    client_secrets_dict, redirect_uri = _get_cloud_oauth_secrets()
+                    creds = google_drive.exchange_web_auth_code(
+                        client_secrets_dict,
+                        code=params["code"],
+                        state=params.get("state", ""),
+                        redirect_uri=redirect_uri,
+                    )
+                    client = google_drive.make_gspread_client(creds)
+                    email = _fetch_google_email(creds)
+                st.session_state.google_client = client
+                st.session_state.google_email = email
+                st.session_state.google_creds = google_drive.credentials_to_dict(creds)
+                st.query_params.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Google 授權失敗：{e}")
+                st.query_params.clear()
+
+    # ── 本地模式：有 token 檔案則自動靜默重新登入 ────────────────────────
+    if not _is_cloud_mode() and "google_client" not in st.session_state and google_drive.has_valid_token():
         try:
             secrets_path = cfg.get("google_drive", {}).get("oauth_client_secrets_path", "")
             if secrets_path:
@@ -258,31 +314,48 @@ def render_market_indices(cfg):
         ''', unsafe_allow_html=True)
         if is_connected:
             if st.button("登出", key="google_logout_btn", use_container_width=True):
-                google_drive.logout_oauth()
-                # clear all gd_subfolders_* cache keys
+                if not _is_cloud_mode():
+                    google_drive.logout_oauth()
                 for k in list(st.session_state.keys()):
                     if k.startswith("gd_subfolders_"):
                         del st.session_state[k]
-                for _k in ("google_client", "google_email", "gd_folder_stack"):
+                for _k in ("google_client", "google_email", "google_creds", "gd_folder_stack"):
                     st.session_state.pop(_k, None)
                 st.rerun()
         else:
             if st.button("登入 Google", key="google_login_btn", use_container_width=True, type="primary"):
-                secrets_path = cfg.get("google_drive", {}).get("oauth_client_secrets_path", "")
-                if not secrets_path:
-                    st.session_state["show_google_setup"] = True
-                else:
+                if _is_cloud_mode():
+                    # 雲端：產生授權 URL，用 JS 跳轉至 Google 授權頁
                     try:
-                        with st.spinner("請在瀏覽器完成 Google 授權…"):
-                            client, email = google_drive.authenticate_oauth(secrets_path)
-                        st.session_state.google_client = client
-                        st.session_state.google_email = email
-                        st.session_state.pop("show_google_setup", None)
-                        st.rerun()
+                        client_secrets_dict, redirect_uri = _get_cloud_oauth_secrets()
+                        auth_url, state, _ = google_drive.get_web_auth_url(
+                            client_secrets_dict, redirect_uri
+                        )
+                        st.session_state["oauth_state"] = state
+                        import streamlit.components.v1 as _comp
+                        _comp.html(
+                            f'<script>window.parent.location.href="{auth_url}";</script>',
+                            height=0,
+                        )
                     except Exception as e:
-                        st.error(f"登入失敗：{e}")
+                        st.error(f"無法取得授權 URL：{e}")
+                else:
+                    # 本地：開啟瀏覽器視窗完成授權
+                    secrets_path = cfg.get("google_drive", {}).get("oauth_client_secrets_path", "")
+                    if not secrets_path:
+                        st.session_state["show_google_setup"] = True
+                    else:
+                        try:
+                            with st.spinner("請在瀏覽器完成 Google 授權…"):
+                                client, email = google_drive.authenticate_oauth(secrets_path)
+                            st.session_state.google_client = client
+                            st.session_state.google_email = email
+                            st.session_state.pop("show_google_setup", None)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"登入失敗：{e}")
 
-    if not is_connected and st.session_state.get("show_google_setup"):
+    if not is_connected and not _is_cloud_mode() and st.session_state.get("show_google_setup"):
         with st.expander("🔑 設定 Google OAuth 金鑰", expanded=True):
             _render_google_quick_connect(cfg)
 
