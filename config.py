@@ -1,0 +1,276 @@
+# -*- coding: utf-8 -*-
+"""
+配置模块 config.py
+通过读写 JSON 配置文件获取所有配置项
+"""
+
+import json
+import os
+from datetime import datetime
+
+CONFIG_FILE = "portfolio_config.json"
+
+# 默认配置模板
+DEFAULT_CONFIG = {
+    "display_currency": "TWD",  # TWD 或 USD
+    "cash_holdings": [
+        {"currency": "TWD", "amount": 0.0, "note": "台幣現金"},
+        {"currency": "USD", "amount": 0.0, "note": "美元現金"},
+    ],
+    "stock_holdings": [
+        # 範例:
+        # {
+        #     "symbol": "2330.TW",
+        #     "name": "台積電",
+        #     "market": "TW",        # TW 或 US
+        #     "shares": 1000,
+        #     "avg_cost": 580.0,
+        #     "currency": "TWD",
+        #     "note": ""
+        # }
+    ],
+    "transactions": [
+        # 範例:
+        # {
+        #     "date": "2025-01-15",
+        #     "symbol": "2330.TW",
+        #     "name": "台積電",
+        #     "market": "TW",
+        #     "action": "BUY",        # BUY 或 SELL
+        #     "shares": 1000,
+        #     "price": 580.0,
+        #     "fee": 585.0,
+        #     "tax": 0.0,
+        #     "currency": "TWD",
+        #     "note": "首次買入"
+        # }
+    ],
+    "watchlist_indices": [
+        {"symbol": "^DJI", "name": "道瓊工業指數"},
+        {"symbol": "^IXIC", "name": "那斯達克"},
+        {"symbol": "^GSPC", "name": "標普500指數"},
+        {"symbol": "USDTWD=X", "name": "美元對台幣"},
+        {"symbol": "TWD=X", "name": "台幣匯率"},
+    ],
+    "google_drive": {
+        "oauth_client_secrets_path": "",  # OAuth2 用戶端金鑰 JSON（Desktop app）
+        "credentials_path": "",           # 服務帳戶 JSON（舊版，備用）
+        "spreadsheet_name": "",           # 匯入來源試算表名稱
+        "spreadsheet_id": "",             # 匯入來源試算表 ID（優先使用）
+        "worksheet_name": "",             # 工作表名稱（空白=第一個）
+        "output_spreadsheet_id": "",      # 備份目標試算表 ID
+        "last_synced": "",                # 上次同步時間
+    },
+    "last_updated": None,
+}
+
+
+def get_config_path():
+    """取得配置文件的完整路徑"""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_dir, CONFIG_FILE)
+
+
+def load_config():
+    """
+    讀取配置文件，若不存在則建立默認配置
+    Returns:
+        dict: 配置字典
+    """
+    config_path = get_config_path()
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            # 補充缺失的默認欄位
+            for key, value in DEFAULT_CONFIG.items():
+                if key not in config:
+                    config[key] = value
+            return config
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"⚠️ 配置文件讀取失敗，使用默認配置: {e}")
+            return DEFAULT_CONFIG.copy()
+    else:
+        save_config(DEFAULT_CONFIG)
+        return DEFAULT_CONFIG.copy()
+
+
+def save_config(config):
+    """
+    保存配置到文件
+    Args:
+        config (dict): 配置字典
+    """
+    config_path = get_config_path()
+    config["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+    except IOError as e:
+        print(f"⚠️ 配置文件保存失敗: {e}")
+
+
+def add_stock_holding(config, symbol, name, market, shares, avg_cost, currency="TWD", note=""):
+    """
+    新增股票持倉
+    """
+    holding = {
+        "symbol": symbol,
+        "name": name,
+        "market": market,
+        "shares": int(shares),
+        "avg_cost": float(avg_cost),
+        "currency": currency,
+        "note": note,
+    }
+    # 檢查是否已存在，若存在則更新
+    for i, h in enumerate(config["stock_holdings"]):
+        if h["symbol"] == symbol:
+            config["stock_holdings"][i] = holding
+            save_config(config)
+            return config
+    config["stock_holdings"].append(holding)
+    save_config(config)
+    return config
+
+
+def remove_stock_holding(config, symbol):
+    """
+    移除股票持倉
+    """
+    config["stock_holdings"] = [
+        h for h in config["stock_holdings"] if h["symbol"] != symbol
+    ]
+    save_config(config)
+    return config
+
+
+def update_cash(config, currency, amount, note=""):
+    """
+    更新現金持倉
+    """
+    for cash in config["cash_holdings"]:
+        if cash["currency"] == currency:
+            cash["amount"] = float(amount)
+            if note:
+                cash["note"] = note
+            save_config(config)
+            return config
+    # 若不存在則新增
+    config["cash_holdings"].append({
+        "currency": currency,
+        "amount": float(amount),
+        "note": note or f"{currency}現金",
+    })
+    save_config(config)
+    return config
+
+
+def add_transaction(config, date, symbol, name, market, action, shares, price, fee=0, tax=0, currency="TWD", note=""):
+    """
+    新增交易紀錄
+    """
+    transaction = {
+        "date": date,
+        "symbol": symbol,
+        "name": name,
+        "market": market,
+        "action": action,
+        "shares": int(shares),
+        "price": float(price),
+        "fee": float(fee),
+        "tax": float(tax),
+        "currency": currency,
+        "note": note,
+    }
+    config["transactions"].append(transaction)
+
+    # 自動更新持倉
+    _update_holdings_from_transaction(config, transaction)
+    save_config(config)
+    return config
+
+
+def _update_holdings_from_transaction(config, txn):
+    """
+    根據交易紀錄自動更新持倉
+    """
+    symbol = txn["symbol"]
+    existing = None
+    for h in config["stock_holdings"]:
+        if h["symbol"] == symbol:
+            existing = h
+            break
+
+    if txn["action"] == "BUY":
+        if existing:
+            total_cost = existing["avg_cost"] * existing["shares"] + txn["price"] * txn["shares"]
+            total_shares = existing["shares"] + txn["shares"]
+            existing["avg_cost"] = total_cost / total_shares if total_shares > 0 else 0
+            existing["shares"] = total_shares
+        else:
+            config["stock_holdings"].append({
+                "symbol": symbol,
+                "name": txn["name"],
+                "market": txn["market"],
+                "shares": txn["shares"],
+                "avg_cost": txn["price"],
+                "currency": txn["currency"],
+                "note": "",
+            })
+        # 扣除現金
+        cost = txn["price"] * txn["shares"] + txn["fee"] + txn["tax"]
+        for cash in config["cash_holdings"]:
+            if cash["currency"] == txn["currency"]:
+                cash["amount"] -= cost
+                break
+
+    elif txn["action"] == "SELL":
+        if existing:
+            existing["shares"] -= txn["shares"]
+            if existing["shares"] <= 0:
+                config["stock_holdings"] = [
+                    h for h in config["stock_holdings"] if h["symbol"] != symbol
+                ]
+        # 增加現金
+        revenue = txn["price"] * txn["shares"] - txn["fee"] - txn["tax"]
+        for cash in config["cash_holdings"]:
+            if cash["currency"] == txn["currency"]:
+                cash["amount"] += revenue
+                break
+
+
+def set_display_currency(config, currency):
+    """
+    設定顯示幣值 (TWD 或 USD)
+    """
+    config["display_currency"] = currency
+    save_config(config)
+    return config
+
+
+def get_all_symbols(config):
+    """
+    取得所有持倉的股票代碼列表
+    """
+    return [h["symbol"] for h in config["stock_holdings"]]
+
+
+def recalculate_holdings(config):
+    """
+    根據所有交易紀錄重新計算持倉
+    """
+    config["stock_holdings"] = []
+    # 重設現金
+    for cash in config["cash_holdings"]:
+        cash["amount"] = 0.0
+
+    transactions_backup = config["transactions"][:]
+    config["transactions"] = []
+
+    for txn in transactions_backup:
+        config["transactions"].append(txn)
+        _update_holdings_from_transaction(config, txn)
+
+    save_config(config)
+    return config
