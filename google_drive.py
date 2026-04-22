@@ -152,40 +152,80 @@ def get_oauth_credentials(client_secrets_path, token_path=None):
 
 def get_web_auth_url(client_secrets_dict, redirect_uri):
     """
-    雲端：產生 Google OAuth 授權 URL（Web 應用程式流程）。
+    雲端：產生 Google OAuth 授權 URL（含 PKCE）。
+    code_verifier 被編碼進 state 參數，redirect 回來後可自動取出，
+    不依賴 session_state 跨請求保留。
     Returns:
-        (auth_url, state, flow)
+        (auth_url, encoded_state)
     """
     if not OAUTH_AVAILABLE:
         raise ImportError("請先安裝: pip install google-auth-oauthlib")
+
+    import base64 as _b64
+    import hashlib as _hl
+    import json as _json
+    import secrets as _sec
     from google_auth_oauthlib.flow import Flow
+
+    # 手動產生 PKCE pair
+    code_verifier = _b64.urlsafe_b64encode(_sec.token_bytes(32)).decode().rstrip("=")
+    code_challenge = _b64.urlsafe_b64encode(
+        _hl.sha256(code_verifier.encode()).digest()
+    ).decode().rstrip("=")
+
+    # 把 code_verifier 編進 state，redirect 回來後從 state 解碼取出
+    raw_state = _sec.token_urlsafe(16)
+    state_payload = _json.dumps({"s": raw_state, "cv": code_verifier})
+    encoded_state = _b64.urlsafe_b64encode(state_payload.encode()).decode().rstrip("=")
+
     flow = Flow.from_client_config(
         client_secrets_dict,
         scopes=OAUTH_SCOPES,
         redirect_uri=redirect_uri,
     )
-    auth_url, state = flow.authorization_url(access_type="offline", prompt="consent")
-    return auth_url, state, flow
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+        state=encoded_state,
+        code_challenge=code_challenge,
+        code_challenge_method="S256",
+    )
+    return auth_url, encoded_state
 
 
-def exchange_web_auth_code(client_secrets_dict, code, state, redirect_uri):
+def exchange_web_auth_code(client_secrets_dict, code, state, redirect_uri, code_verifier=None):
     """
     雲端：用授權碼換取 credentials。
+    code_verifier 優先從參數取；若未提供，嘗試從 state 解碼取出。
     Returns:
         google.oauth2.credentials.Credentials
     """
     if not OAUTH_AVAILABLE:
         raise ImportError("請先安裝: pip install google-auth-oauthlib")
-    from google_auth_oauthlib.flow import Flow
+
+    import base64 as _b64
+    import json as _json
     import os as _os
+    from google_auth_oauthlib.flow import Flow
+
     _os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+    # 從 state 解碼取出 code_verifier
+    if code_verifier is None and state:
+        try:
+            padding = (4 - len(state) % 4) % 4
+            decoded = _b64.urlsafe_b64decode(state + "=" * padding).decode()
+            code_verifier = _json.loads(decoded).get("cv")
+        except Exception:
+            pass
+
     flow = Flow.from_client_config(
         client_secrets_dict,
         scopes=OAUTH_SCOPES,
         redirect_uri=redirect_uri,
         state=state,
     )
-    flow.fetch_token(code=code)
+    flow.fetch_token(code=code, code_verifier=code_verifier)
     return flow.credentials
 
 

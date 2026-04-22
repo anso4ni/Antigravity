@@ -338,7 +338,7 @@ def render_market_indices(cfg):
                     # 雲端：產生授權 URL，存入 session_state 後 rerun 顯示連結
                     try:
                         client_secrets_dict, redirect_uri = _get_cloud_oauth_secrets()
-                        auth_url, state, _ = google_drive.get_web_auth_url(
+                        auth_url, state = google_drive.get_web_auth_url(
                             client_secrets_dict, redirect_uri
                         )
                         st.session_state["pending_auth_url"] = auth_url
