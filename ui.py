@@ -280,6 +280,8 @@ def render_market_indices(cfg):
                 st.session_state.google_client = client
                 st.session_state.google_email = email
                 st.session_state.google_creds = google_drive.credentials_to_dict(creds)
+                st.session_state.pop("pending_auth_url", None)
+                st.session_state.pop("oauth_state", None)
                 st.query_params.clear()
                 st.rerun()
             except Exception as e:
@@ -323,20 +325,25 @@ def render_market_indices(cfg):
                     st.session_state.pop(_k, None)
                 st.rerun()
         else:
-            if st.button("登入 Google", key="google_login_btn", use_container_width=True, type="primary"):
+            # 雲端模式：若已產生授權 URL，直接顯示連結按鈕
+            if _is_cloud_mode() and st.session_state.get("pending_auth_url"):
+                st.link_button(
+                    "🔗 點此前往 Google 授權",
+                    st.session_state["pending_auth_url"],
+                    use_container_width=True,
+                    type="primary",
+                )
+            elif st.button("登入 Google", key="google_login_btn", use_container_width=True, type="primary"):
                 if _is_cloud_mode():
-                    # 雲端：產生授權 URL，用 JS 跳轉至 Google 授權頁
+                    # 雲端：產生授權 URL，存入 session_state 後 rerun 顯示連結
                     try:
                         client_secrets_dict, redirect_uri = _get_cloud_oauth_secrets()
                         auth_url, state, _ = google_drive.get_web_auth_url(
                             client_secrets_dict, redirect_uri
                         )
+                        st.session_state["pending_auth_url"] = auth_url
                         st.session_state["oauth_state"] = state
-                        import streamlit.components.v1 as _comp
-                        _comp.html(
-                            f'<script>window.parent.location.href="{auth_url}";</script>',
-                            height=0,
-                        )
+                        st.rerun()
                     except Exception as e:
                         st.error(f"無法取得授權 URL：{e}")
                 else:
