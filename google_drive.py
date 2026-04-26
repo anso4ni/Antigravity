@@ -393,32 +393,44 @@ def export_portfolio_to_sheet(cfg, spreadsheet_id=None, spreadsheet_name=None, c
     return now
 
 
-def _drive_session(client):
-    """從 gspread Client 取得可呼叫 Drive API 的 HTTP session"""
-    from google.auth.transport.requests import AuthorizedSession as _AS
+def _drive_session(client, creds_dict=None):
+    """
+    取得可呼叫 Drive API 的 HTTP session。
+    優先：creds_dict > client.session > client.auth > 本地 token 檔
+    """
+    from google.auth.transport.requests import AuthorizedSession as _AS, Request as _Req
 
-    # gspread 6.x: client.session 是帶授權的 HTTP session，可直接使用
-    session = getattr(client, "session", None)
-    if session is not None and hasattr(session, "get") and hasattr(session, "post"):
-        return session
+    # 優先：直接用 credentials dict（雲端 OAuth 後存入 session_state）
+    if creds_dict is not None:
+        try:
+            creds = credentials_from_dict(creds_dict)
+            if creds.expired and creds.refresh_token:
+                creds.refresh(_Req())
+            return _AS(creds)
+        except Exception:
+            pass
 
-    # gspread 5.x: client.auth 是 raw credentials
-    creds = getattr(client, "auth", None)
-    if creds is not None:
-        return _AS(creds)
+    # gspread 6.x: client.session 是帶授權的 HTTP session
+    if client is not None:
+        session = getattr(client, "session", None)
+        if session is not None and hasattr(session, "get") and hasattr(session, "post"):
+            return session
+        # gspread 5.x: client.auth 是 raw credentials
+        creds = getattr(client, "auth", None)
+        if creds is not None:
+            return _AS(creds)
 
-    # 最後手段：從已快取的 OAuth token 檔重新建立 session
+    # 最後手段：本地 token 檔
     if OAUTH_AVAILABLE and os.path.exists(OAUTH_TOKEN_FILE):
-        from google.auth.transport.requests import Request
         creds = OAuthCredentials.from_authorized_user_file(OAUTH_TOKEN_FILE, OAUTH_SCOPES)
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            creds.refresh(_Req())
         return _AS(creds)
 
-    raise RuntimeError("無法從 gspread Client 取得憑證，請確認 gspread 版本")
+    raise RuntimeError("無法取得 Google Drive 憑證，請重新登入")
 
 
-def list_drive_folders(client, parent_id=None):
+def list_drive_folders(client, parent_id=None, creds_dict=None):
     """
     列出 Google Drive 中指定層級的資料夾
     Args:
@@ -427,7 +439,7 @@ def list_drive_folders(client, parent_id=None):
     Returns:
         list[dict]: [{"id": ..., "name": ...}, ...]
     """
-    session = _drive_session(client)
+    session = _drive_session(client, creds_dict)
     parent = parent_id if parent_id else "root"
     folders = []
     page_token = None
@@ -454,7 +466,7 @@ def list_drive_folders(client, parent_id=None):
     return folders
 
 
-def list_drive_files(client, folder_id=None, extensions=None):
+def list_drive_files(client, folder_id=None, extensions=None, creds_dict=None):
     """
     列出 Google Drive 資料夾中的檔案（非資料夾）
     Args:
@@ -462,7 +474,7 @@ def list_drive_files(client, folder_id=None, extensions=None):
     Returns:
         list[dict]: [{"id", "name", "mimeType", "modifiedTime"}, ...]
     """
-    session = _drive_session(client)
+    session = _drive_session(client, creds_dict)
     parent = folder_id if folder_id else "root"
 
     q_parts = [f"'{parent}' in parents", "trashed=false",
@@ -502,11 +514,11 @@ def list_drive_files(client, folder_id=None, extensions=None):
     return files
 
 
-def download_drive_file(client, file_id):
+def download_drive_file(client, file_id, creds_dict=None):
     """
     下載 Google Drive 檔案內容，回傳 bytes
     """
-    session = _drive_session(client)
+    session = _drive_session(client, creds_dict)
     resp = session.get(
         f"https://www.googleapis.com/drive/v3/files/{file_id}",
         params={"alt": "media"},
@@ -548,7 +560,7 @@ def export_portfolio_as_csv_zip(cfg):
     return buf.read()
 
 
-def upload_file_to_drive(client, file_bytes, filename, mime_type="application/octet-stream", folder_id=None):
+def upload_file_to_drive(client, file_bytes, filename, mime_type="application/octet-stream", folder_id=None, creds_dict=None):
     """
     上傳檔案到 Google Drive（multipart upload）
     Args:
@@ -557,12 +569,13 @@ def upload_file_to_drive(client, file_bytes, filename, mime_type="application/oc
         filename (str): 儲存在 Drive 的檔名
         mime_type (str): MIME type
         folder_id (str|None): 目標資料夾 ID，None = 根目錄
+        creds_dict (dict|None): OAuth credentials dict（雲端環境用）
     Returns:
         dict: {"id": ..., "name": ..., "webViewLink": ...}
     """
     import json as _json
 
-    session = _drive_session(client)
+    session = _drive_session(client, creds_dict)
     metadata = {"name": filename}
     if folder_id:
         metadata["parents"] = [folder_id]

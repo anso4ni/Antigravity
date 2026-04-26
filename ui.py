@@ -1078,15 +1078,17 @@ def _render_google_drive_import(cfg):
     # 同時載入子資料夾和 Excel 檔案
     sf_key = f"gd_import_sf_{import_parent_id}"
     xl_key = f"gd_import_xl_{import_parent_id}"
+    _creds = st.session_state.get("google_creds")
     if sf_key not in st.session_state:
         with st.spinner("載入資料夾…"):
             st.session_state[sf_key] = google_drive.list_drive_folders(
-                oauth_client, parent_id=import_parent_id
+                oauth_client, parent_id=import_parent_id, creds_dict=_creds
             )
     if xl_key not in st.session_state:
         with st.spinner("載入 Excel 檔案…"):
             st.session_state[xl_key] = google_drive.list_drive_files(
-                oauth_client, folder_id=import_parent_id, extensions=[".xlsx", ".xls"]
+                oauth_client, folder_id=import_parent_id, extensions=[".xlsx", ".xls"],
+                creds_dict=_creds
             )
     subfolders = st.session_state.get(sf_key) or []
     excel_files = st.session_state.get(xl_key) or []
@@ -1146,7 +1148,8 @@ def _render_google_drive_import(cfg):
                 try:
                     with st.spinner(f"下載 {selected_file['name']}…"):
                         file_bytes = google_drive.download_drive_file(
-                            oauth_client, selected_file["id"]
+                            oauth_client, selected_file["id"],
+                            creds_dict=st.session_state.get("google_creds")
                         )
                     import io as _io
                     xl = pd.ExcelFile(_io.BytesIO(file_bytes))
@@ -1162,7 +1165,8 @@ def _render_google_drive_import(cfg):
                 try:
                     with st.spinner(f"匯入 {selected_file['name']}…"):
                         file_bytes = google_drive.download_drive_file(
-                            oauth_client, selected_file["id"]
+                            oauth_client, selected_file["id"],
+                            creds_dict=st.session_state.get("google_creds")
                         )
                         import import_excel as _ie
                         cfg = config.load_config()
@@ -1201,7 +1205,8 @@ def _render_google_drive_import(cfg):
     if cache_key not in st.session_state:
         with st.spinner("載入資料夾清單…"):
             st.session_state[cache_key] = google_drive.list_drive_folders(
-                oauth_client, parent_id=current_parent_id
+                oauth_client, parent_id=current_parent_id,
+                creds_dict=st.session_state.get("google_creds")
             )
     subfolders = st.session_state.get(cache_key) or []
 
@@ -1270,6 +1275,7 @@ def _render_google_drive_import(cfg):
                         filename=filename,
                         mime_type=mime_type,
                         folder_id=target_folder_id,
+                        creds_dict=st.session_state.get("google_creds"),
                     )
                 synced_at = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
                 cfg["google_drive"]["last_synced"] = synced_at
