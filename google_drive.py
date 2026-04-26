@@ -454,6 +454,68 @@ def list_drive_folders(client, parent_id=None):
     return folders
 
 
+def list_drive_files(client, folder_id=None, extensions=None):
+    """
+    列出 Google Drive 資料夾中的檔案（非資料夾）
+    Args:
+        extensions: [".xlsx", ".xls"] 等副檔名過濾，None = 全部
+    Returns:
+        list[dict]: [{"id", "name", "mimeType", "modifiedTime"}, ...]
+    """
+    session = _drive_session(client)
+    parent = folder_id if folder_id else "root"
+
+    q_parts = [f"'{parent}' in parents", "trashed=false",
+               "mimeType != 'application/vnd.google-apps.folder'"]
+
+    if extensions:
+        ext_lower = [e.lower() for e in extensions]
+        mime_map = {
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xls": "application/vnd.ms-excel",
+        }
+        mime_filters = [
+            f"mimeType='{mime_map[e]}'" for e in ext_lower if e in mime_map
+        ]
+        if mime_filters:
+            q_parts.append(f"({' or '.join(mime_filters)})")
+
+    files = []
+    page_token = None
+    while True:
+        params = {
+            "q": " and ".join(q_parts),
+            "fields": "nextPageToken,files(id,name,mimeType,modifiedTime)",
+            "orderBy": "name",
+            "pageSize": 100,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        resp = session.get("https://www.googleapis.com/drive/v3/files", params=params)
+        if resp.status_code != 200:
+            raise Exception(f"Drive API 錯誤 ({resp.status_code}): {resp.text}")
+        data = resp.json()
+        files.extend(data.get("files", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    return files
+
+
+def download_drive_file(client, file_id):
+    """
+    下載 Google Drive 檔案內容，回傳 bytes
+    """
+    session = _drive_session(client)
+    resp = session.get(
+        f"https://www.googleapis.com/drive/v3/files/{file_id}",
+        params={"alt": "media"},
+    )
+    if resp.status_code != 200:
+        raise Exception(f"下載失敗 ({resp.status_code}): {resp.text}")
+    return resp.content
+
+
 def export_portfolio_as_json(cfg):
     """將投資組合匯出為 JSON bytes"""
     import json as _json

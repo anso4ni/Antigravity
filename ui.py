@@ -1041,120 +1041,141 @@ def _render_google_drive_import(cfg):
     else:
         st.warning("尚未登入 Google，請點選右上角「登入 Google」")
 
-    with st.form("gd_settings_form"):
-        st.markdown("##### 🔑 OAuth 設定")
-
-        oauth_secrets_path = st.text_input(
-            "OAuth 用戶端金鑰路徑（JSON）",
-            value=gd_cfg.get("oauth_client_secrets_path", ""),
-            placeholder="例: C:/keys/client_secrets.json",
-            key="gd_oauth_secrets",
-            help="在 Google Cloud Console 建立「OAuth 2.0 用戶端 ID（桌面應用程式）」後下載的 JSON",
-        )
-
-        st.markdown("##### 📊 試算表設定")
-
-        spreadsheet_id = st.text_input(
-            "試算表 ID（從網址取得）",
-            value=gd_cfg.get("spreadsheet_id", ""),
-            placeholder="例: 1BxiM...",
-            key="gd_sheet_id",
-            help="從 Google Sheets 網址中取得: https://docs.google.com/spreadsheets/d/【這段就是ID】/edit",
-        )
-
-        spreadsheet_name = st.text_input(
-            "或輸入試算表名稱",
-            value=gd_cfg.get("spreadsheet_name", ""),
-            placeholder="例: 我的交易紀錄",
-            key="gd_sheet_name",
-        )
-
-        worksheet_name = st.text_input(
-            "工作表名稱（空白=第一個）",
-            value=gd_cfg.get("worksheet_name", ""),
-            placeholder="例: Sheet1",
-            key="gd_ws_name",
-        )
-
-        save_btn = st.form_submit_button("💾 儲存設定", use_container_width=True)
-        if save_btn:
-            cfg["google_drive"] = {
-                "oauth_client_secrets_path": oauth_secrets_path,
-                "credentials_path": gd_cfg.get("credentials_path", ""),
-                "spreadsheet_name": spreadsheet_name,
-                "spreadsheet_id": spreadsheet_id,
-                "worksheet_name": worksheet_name,
-                "output_spreadsheet_id": gd_cfg.get("output_spreadsheet_id", ""),
-                "last_synced": gd_cfg.get("last_synced", ""),
-            }
-            config.save_config(cfg)
-            st.success("✅ 設定已儲存")
-
-    # 預覽與匯入按鈕
-    st.markdown("---")
-    gd_cfg = cfg.get("google_drive", {})
-    sheet_id = gd_cfg.get("spreadsheet_id", "")
-    sheet_name = gd_cfg.get("spreadsheet_name", "")
+    # 本地模式才顯示 OAuth 金鑰路徑設定
+    if not _is_cloud_mode():
+        with st.form("gd_oauth_form"):
+            st.markdown("##### 🔑 OAuth 金鑰路徑（本地）")
+            new_path = st.text_input(
+                "OAuth 用戶端金鑰路徑（JSON）",
+                value=gd_cfg.get("oauth_client_secrets_path", ""),
+                placeholder="C:/keys/client_secrets.json",
+                key="gd_oauth_secrets",
+            )
+            if st.form_submit_button("💾 儲存") and new_path:
+                cfg.setdefault("google_drive", {})["oauth_client_secrets_path"] = new_path
+                config.save_config(cfg)
+                st.success("✅ 已儲存")
 
     if not oauth_client:
         st.info("登入 Google 後即可使用匯入與備份功能")
         return
 
-    col_a, col_b = st.columns(2)
+    # ── 從 Google Drive 選取 Excel 檔案匯入 ─────────────────────────
+    st.markdown("---")
+    st.markdown("##### 📂 從 Google Drive 匯入 Excel")
 
-    with col_a:
-        if st.button("👁️ 預覽數據", use_container_width=True, key="gd_preview"):
-            try:
-                with st.spinner("正在讀取 Google Sheets..."):
-                    df = google_drive.read_sheet_as_dataframe(
-                        oauth_client,
-                        spreadsheet_name=sheet_name or None,
-                        spreadsheet_id=sheet_id or None,
-                        worksheet_name=gd_cfg.get("worksheet_name") or None,
+    # 資料夾瀏覽器（使用獨立 key，與備份區塊不衝突）
+    if "gd_import_folder_stack" not in st.session_state:
+        st.session_state.gd_import_folder_stack = []
+
+    import_parent_id = (
+        st.session_state.gd_import_folder_stack[-1]["id"]
+        if st.session_state.gd_import_folder_stack else None
+    )
+    crumbs = ["📁 My Drive"] + [f["name"] for f in st.session_state.gd_import_folder_stack]
+    st.caption("資料夾路徑：" + " / ".join(crumbs))
+
+    # 同時載入子資料夾和 Excel 檔案
+    sf_key = f"gd_import_sf_{import_parent_id}"
+    xl_key = f"gd_import_xl_{import_parent_id}"
+    if sf_key not in st.session_state:
+        with st.spinner("載入資料夾…"):
+            st.session_state[sf_key] = google_drive.list_drive_folders(
+                oauth_client, parent_id=import_parent_id
+            )
+    if xl_key not in st.session_state:
+        with st.spinner("載入 Excel 檔案…"):
+            st.session_state[xl_key] = google_drive.list_drive_files(
+                oauth_client, folder_id=import_parent_id, extensions=[".xlsx", ".xls"]
+            )
+    subfolders = st.session_state.get(sf_key) or []
+    excel_files = st.session_state.get(xl_key) or []
+
+    # 資料夾導航列
+    col_fsel, col_finto, col_fup, col_fref = st.columns([5, 1, 1, 1])
+    with col_fsel:
+        folder_options = ["📁 此資料夾"] + [("📂 " + f["name"]) for f in subfolders]
+        folder_nav_idx = st.selectbox(
+            "子資料夾",
+            range(len(folder_options)),
+            format_func=lambda i: folder_options[i],
+            key="gd_import_folder_nav",
+            label_visibility="collapsed",
+        )
+    with col_finto:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if folder_nav_idx > 0:
+            if st.button("📂 進入", key="gd_import_into"):
+                sel = subfolders[folder_nav_idx - 1]
+                st.session_state.gd_import_folder_stack.append(
+                    {"id": sel["id"], "name": sel["name"]}
+                )
+                st.rerun()
+    with col_fup:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if st.session_state.gd_import_folder_stack:
+            if st.button("⬆️ 返回", key="gd_import_up"):
+                st.session_state.gd_import_folder_stack.pop()
+                st.rerun()
+    with col_fref:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if st.button("🔄", key="gd_import_refresh", help="重新整理"):
+            for k in list(st.session_state.keys()):
+                if k.startswith("gd_import_sf_") or k.startswith("gd_import_xl_"):
+                    del st.session_state[k]
+            st.rerun()
+
+    # Excel 檔案選擇
+    if not excel_files:
+        st.info("此資料夾沒有 Excel 檔案（.xlsx / .xls），請進入其他子資料夾")
+    else:
+        file_options = [f["name"] for f in excel_files]
+        sel_idx = st.selectbox(
+            "選擇 Excel 檔案",
+            range(len(file_options)),
+            format_func=lambda i: file_options[i],
+            key="gd_import_file_select",
+        )
+        selected_file = excel_files[sel_idx]
+        mod_time = selected_file.get("modifiedTime", "")[:10]
+        st.caption(f"修改日期：{mod_time}")
+
+        col_prev, col_imp = st.columns(2)
+        with col_prev:
+            if st.button("👁️ 預覽工作表", use_container_width=True, key="gd_import_preview"):
+                try:
+                    with st.spinner(f"下載 {selected_file['name']}…"):
+                        file_bytes = google_drive.download_drive_file(
+                            oauth_client, selected_file["id"]
+                        )
+                    import io as _io
+                    xl = pd.ExcelFile(_io.BytesIO(file_bytes))
+                    st.success(f"工作表：{', '.join(xl.sheet_names)}")
+                    df_prev = xl.parse(xl.sheet_names[0], header=None, nrows=10)
+                    st.dataframe(df_prev, use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"❌ 預覽失敗: {e}")
+
+        with col_imp:
+            if st.button("📥 匯入此檔案", use_container_width=True,
+                         key="gd_import_run", type="primary"):
+                try:
+                    with st.spinner(f"匯入 {selected_file['name']}…"):
+                        file_bytes = google_drive.download_drive_file(
+                            oauth_client, selected_file["id"]
+                        )
+                        import import_excel as _ie
+                        cfg = config.load_config()
+                        result = _ie.import_all_from_bytes(file_bytes, cfg)
+                    st.success(
+                        f"✅ 匯入完成！"
+                        f"持倉 {result['holdings']} 檔、"
+                        f"現金 {result['cash']} 筆、"
+                        f"交易 {result['transactions']} 筆"
                     )
-                if df.empty:
-                    st.warning("試算表中沒有數據")
-                else:
-                    st.success(f"讀取到 {len(df)} 筆資料")
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-            except Exception as e:
-                st.error(f"❌ 讀取失敗: {e}")
-
-    with col_b:
-        if st.button("📥 匯入交易", use_container_width=True, key="gd_import", type="primary"):
-            try:
-                with st.spinner("正在匯入交易紀錄..."):
-                    transactions, df = google_drive.import_transactions_from_google(
-                        client=oauth_client,
-                        spreadsheet_name=sheet_name or None,
-                        spreadsheet_id=sheet_id or None,
-                        worksheet_name=gd_cfg.get("worksheet_name") or None,
-                    )
-
-                if not transactions:
-                    st.warning("沒有找到有效的交易紀錄")
-                else:
-                    # 匯入到配置
-                    imported = 0
-                    existing_dates_symbols = {
-                        (t["date"], t["symbol"], t["action"])
-                        for t in cfg.get("transactions", [])
-                    }
-                    for txn in transactions:
-                        key = (txn["date"], txn["symbol"], txn["action"])
-                        if key not in existing_dates_symbols:
-                            config.add_transaction(
-                                cfg, txn["date"], txn["symbol"], txn["name"],
-                                txn["market"], txn["action"], txn["shares"],
-                                txn["price"], txn["fee"], txn["tax"],
-                                txn["currency"], txn["note"],
-                            )
-                            imported += 1
-
-                    st.success(f"✅ 成功匯入 {imported} 筆交易（跳過 {len(transactions) - imported} 筆重複）")
                     st.rerun()
-            except Exception as e:
-                st.error(f"❌ 匯入失敗: {e}")
+                except Exception as e:
+                    st.error(f"❌ 匯入失敗: {e}")
 
     # 備份到 Google 雲端硬碟
     st.markdown("---")

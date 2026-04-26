@@ -203,5 +203,39 @@ def _safe_float(val):
         return 0.0
 
 
+def import_all_from_bytes(file_bytes, cfg):
+    """
+    從 bytes（Google Drive 下載內容）匯入 Excel，邏輯與 import_all() 相同。
+    Args:
+        file_bytes (bytes): Excel 檔案內容
+        cfg (dict): 現有 portfolio config，會直接覆寫持倉/現金/交易
+    Returns:
+        dict: {"holdings": n, "cash": n, "transactions": n}
+    """
+    import io
+    import config as _config
+
+    buf = io.BytesIO(file_bytes)
+
+    holdings = _parse_holdings_sheet(buf)
+    buf.seek(0)
+    cash_holdings = _parse_cash(buf)
+    buf.seek(0)
+    transactions = _parse_transactions_sheet(buf)
+
+    cfg["stock_holdings"] = holdings
+    cfg["cash_holdings"] = cash_holdings
+    cfg["transactions"] = transactions
+    cfg["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    _config.save_config(cfg)
+
+    return {
+        "holdings": len(holdings),
+        "cash": len(cash_holdings),
+        "transactions": len(transactions),
+    }
+
+
 if __name__ == "__main__":
     import_all()
