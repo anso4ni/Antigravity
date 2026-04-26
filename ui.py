@@ -1355,6 +1355,21 @@ def render_home_details(portfolio):
             return amount if stock_currency == "TWD" else amount * rate
         return _to_disp(amount, stock_currency)
 
+    # 預計算各 source 的現金（用於對齊首頁卡片的 pct 分母）
+    cash_by_source_twd = {}
+    cash_by_source_disp = {}
+    for c in cash_holdings:
+        src = c.get("source", "其他")
+        amt_twd = c["amount"] if c["currency"] == "TWD" else c["amount"] * rate
+        cash_by_source_twd[src] = cash_by_source_twd.get(src, 0) + amt_twd
+        if disp_mode == "USD":
+            amt_d = c["amount"] / rate if c["currency"] == "TWD" else c["amount"]
+        elif disp_mode == "TWD":
+            amt_d = amt_twd
+        else:  # Default: native
+            amt_d = c["amount"]
+        cash_by_source_disp[src] = cash_by_source_disp.get(src, 0) + amt_d
+
     # 定義分類與其對應的顏色、圖示
     categories = [
         {"id": "cat-tw", "name": "🇹🇼 台股", "source": "台股", "color": "#00e676"},
@@ -1368,18 +1383,20 @@ def render_home_details(portfolio):
         if not cat_stocks:
             continue
 
-        # 計算此分類匯總（依顯示幣別）
+        src_cash_twd = cash_by_source_twd.get(cat["source"], 0)
+
+        # 計算此分類匯總（依顯示幣別），pct 分子含現金以對齊首頁卡片
         if disp_mode == "Default":
-            # native currency per source: 台股→TWD, others→USD
             cat_native_currency = "TWD" if cat["source"] == "台股" else "USD"
             cat_mv = sum(s["market_value_twd"] if cat_native_currency == "TWD" else s["market_value_usd"] for s in cat_stocks)
             cat_cost = sum(_to_disp(s["avg_cost"] * s["shares"], s["currency"]) for s in cat_stocks)
             cat_mv_twd = sum(s["market_value_twd"] for s in cat_stocks)
-            pct = (cat_mv_twd / total_disp) * 100
+            pct = ((cat_mv_twd + src_cash_twd) / total_disp) * 100
         else:
             cat_mv = sum(s["market_value_twd"] if is_twd else s["market_value_usd"] for s in cat_stocks)
             cat_cost = sum(_to_disp(s["avg_cost"] * s["shares"], s["currency"]) for s in cat_stocks)
-            pct = (cat_mv / total_disp) * 100
+            src_cash_disp = cash_by_source_disp.get(cat["source"], 0)
+            pct = ((cat_mv + src_cash_disp) / total_disp) * 100
         cat_sym = _stock_sym(cat_stocks[0]["currency"]) if cat_stocks else sym
 
         pl = cat_mv - cat_cost
