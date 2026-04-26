@@ -675,7 +675,7 @@ def render_asset_cards(portfolio, cfg=None):
     with filter_col:
         market_filter = st.segmented_control(
             "市場篩選",
-            options=["🌐 全部", "🇹🇼 台股", "🇺🇸 美股", "🏦 複委託"],
+            options=["🌐 全部", "🇹🇼 台股", "🇺🇸 Firstrade", "🏦 複委託"],
             default="🌐 全部",
             key="asset_market_filter",
             label_visibility="collapsed",
@@ -687,7 +687,7 @@ def render_asset_cards(portfolio, cfg=None):
     if market_filter == "🇹🇼 台股":
         stocks = [s for s in stocks if s.get("source") == "台股"]
         cash_holdings = [c for c in cash_holdings if c.get("source") == "台股"]
-    elif market_filter == "🇺🇸 美股":
+    elif market_filter == "🇺🇸 Firstrade":
         stocks = [s for s in stocks if s.get("source") == "FT"]
         cash_holdings = [c for c in cash_holdings if c.get("source") == "FT"]
     elif market_filter == "🏦 複委託":
@@ -702,14 +702,16 @@ def render_asset_cards(portfolio, cfg=None):
     _render_assets_list_view(stocks, cash_holdings, cfg)
 
 
-def _render_stock_txn_detail(symbol, cfg):
-    """展開顯示指定股票的交易明細"""
+def _render_stock_txn_detail(symbol, cfg, source=None):
+    """展開顯示指定股票的交易明細，source 不為 None 時只顯示該來源的交易"""
     if cfg is None:
         st.info("無法載入交易資料。")
         return
     transactions = cfg.get("transactions", [])
     stock_txns = sorted(
-        [t for t in transactions if t["symbol"] == symbol],
+        [t for t in transactions
+         if t["symbol"] == symbol
+         and (source is None or t.get("source") == source or not t.get("source"))],
         key=lambda t: t["date"],
     )
     if not stock_txns:
@@ -787,7 +789,7 @@ def _render_assets_list_view(stocks, cash_holdings, cfg=None):
             )
             with st.expander(row_label, expanded=False):
                 if cfg:
-                    _render_stock_txn_detail(s["symbol"], cfg)
+                    _render_stock_txn_detail(s["symbol"], cfg, source=s.get("source"))
                 else:
                     st.info("無交易資料。")
 

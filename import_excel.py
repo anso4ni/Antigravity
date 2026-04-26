@@ -191,6 +191,7 @@ def _parse_transactions_sheet(excel_path):
             symbol_yf = symbol + ".TW"
         else:
             symbol_yf = symbol
+        src = "FT" if market_raw == "FT" else ("複委託" if market_raw == "複委託" else "台股")
         transactions.append({
             "date": pd.Timestamp(row["買賣日期"]).strftime("%Y-%m-%d"),
             "symbol": symbol_yf,
@@ -202,6 +203,7 @@ def _parse_transactions_sheet(excel_path):
             "fee": float(row["手續費"]) if pd.notna(row["手續費"]) else 0.0,
             "tax": float(row["證交稅"]) if pd.notna(row["證交稅"]) else 0.0,
             "currency": currency,
+            "source": src,
             "note": f"from excel ({market_raw})",
         })
     return transactions
