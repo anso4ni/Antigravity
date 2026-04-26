@@ -763,10 +763,30 @@ def _render_stock_txn_detail(symbol, cfg):
 
 
 def _render_assets_card_view(stocks, cash_holdings, cfg=None):
-    """圖示化模式：卡片方格"""
-    _SEL = "asset_txn_selected"
-    if _SEL not in st.session_state:
-        st.session_state[_SEL] = None
+    """圖示化模式：卡片方格（點擊卡片展開交易明細）"""
+    st.markdown("""
+    <style>
+    [data-testid="stExpander"] {
+        background: linear-gradient(145deg, #1e1e3a, #252547) !important;
+        border: 1px solid rgba(255,255,255,0.06) !important;
+        border-radius: 16px !important;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.2) !important;
+        margin-bottom: 8px !important;
+        overflow: hidden !important;
+    }
+    [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] > div > div > summary {
+        padding: 14px 18px !important;
+        cursor: pointer !important;
+    }
+    [data-testid="stExpander"] summary:hover {
+        background: rgba(255,255,255,0.03) !important;
+    }
+    [data-testid="stExpander"] .st-emotion-cache-p5msec {
+        padding: 0 18px 14px 18px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     if stocks:
         cols = st.columns(3)
@@ -775,44 +795,24 @@ def _render_assets_card_view(stocks, cash_holdings, cfg=None):
             with cols[i % 3]:
                 pl = stock["profit_loss"]
                 pl_pct = stock["profit_loss_pct"]
-                pl_class = "asset-pl-up" if pl >= 0 else "asset-pl-down"
                 pl_sign = "+" if pl >= 0 else ""
                 cur = "NT$" if stock["currency"] == "TWD" else "US$"
                 mkt = "🇹🇼" if stock["market"] == "TW" else "🇺🇸"
+                pl_arrow = "▲" if pl >= 0 else "▼"
 
-                st.markdown(f"""
-                <div class="asset-card">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <div>
-                            <span class="asset-symbol">{mkt} {sym}</span>
-                            <div class="asset-name">{stock['name']}</div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div class="asset-value">{cur} {stock['current_price']:,.2f}</div>
-                            <div class="{pl_class}" style="font-size:0.8rem;">
-                                {pl_sign}{pl:,.0f} ({pl_sign}{pl_pct:.2f}%)
-                            </div>
-                        </div>
-                    </div>
-                    <div style="margin-top:10px; color:#a0aec0; font-size:0.78rem; display:flex; justify-content:space-between;">
-                        <span>持有 {stock['shares']:,} 股</span>
-                        <span>成本 {cur}{stock['avg_cost']:,.2f}</span>
-                        <span>市值 {cur}{stock['market_value']:,.0f}</span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                is_sel = st.session_state[_SEL] == sym
-                label = "▲ 收起" if is_sel else "📋 交易明細"
-                if st.button(label, key=f"card_txn_{sym}", use_container_width=True):
-                    st.session_state[_SEL] = None if is_sel else sym
-                    st.rerun()
-
-    # 交易明細展開區
-    selected = st.session_state.get(_SEL)
-    if selected and cfg is not None:
-        st.markdown(f"#### 📋 {selected} 交易明細")
-        _render_stock_txn_detail(selected, cfg)
+                label = (
+                    f"{mkt} **{sym}** {stock['name']}  |  "
+                    f"{cur}{stock['current_price']:,.2f}  "
+                    f"{pl_arrow} {pl_sign}{pl_pct:.2f}%"
+                )
+                with st.expander(label, expanded=False):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("持有股數", f"{stock['shares']:,}")
+                    c2.metric("成本", f"{cur}{stock['avg_cost']:,.2f}")
+                    c3.metric("市值", f"{cur}{stock['market_value']:,.0f}")
+                    if cfg:
+                        st.markdown("---")
+                        _render_stock_txn_detail(sym, cfg)
 
     # 現金卡片
     if cash_holdings:
