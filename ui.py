@@ -1388,6 +1388,22 @@ def _render_google_drive_import(cfg):
                 st.error(f"❌ 備份失敗: {e}")
 
 
+_SORT_COLS = [
+    ("代碼",    "symbol"),
+    ("名稱",    "name"),
+    ("數量",    "shares"),
+    ("均價",    "avg_cost"),
+    ("投入金額", "invested"),
+    ("現價",    "current_price"),
+    ("日漲跌",  "change"),
+    ("市值",    "market_value"),
+    ("損益",    "pl"),
+    ("報酬率%", "pl_pct"),
+    ("操作",    None),   # not sortable
+]
+_COL_WIDTHS = [1.2, 1.2, 0.8, 1, 1.2, 1, 1, 1.2, 1.2, 1, 0.7]
+
+
 def render_home_details(portfolio):
     """渲染首頁下方各分類的詳細列表資訊（台股、美股、複委託、現金）"""
     st.markdown("<br><br>", unsafe_allow_html=True)
@@ -1521,12 +1537,47 @@ def render_home_details(portfolio):
                 "source": s.get("source", ""),
             })
         
-        # 表頭
-        header_cols = st.columns([1.2, 1.2, 0.8, 1, 1.2, 1, 1, 1.2, 1.2, 1, 0.7])
-        headers = ["代碼", "名稱", "數量", "均價", "投入金額", "現價", "日漲跌", "市值", "損益", "報酬率%", "操作"]
-        for i, h in enumerate(headers):
-            header_cols[i].markdown(f'<div style="font-weight:600; font-size:0.82rem; color:#888; padding:4px 0; border-bottom:1px solid #333;">{h}</div>', unsafe_allow_html=True)
-        
+        # ── 排序狀態 ──────────────────────────────────────────────
+        _sk = f"sort_col_{cat['source']}"
+        _sd = f"sort_asc_{cat['source']}"
+        if _sk not in st.session_state:
+            st.session_state[_sk] = None
+            st.session_state[_sd] = True
+        _cur_col = st.session_state[_sk]
+        _cur_asc = st.session_state[_sd]
+
+        if _cur_col:
+            rows.sort(
+                key=lambda r: (r[_cur_col] is None, r[_cur_col] if r[_cur_col] is not None else 0),
+                reverse=not _cur_asc,
+            )
+
+        # 表頭（可點擊排序）
+        st.markdown('<div class="sort-hdr"></div>', unsafe_allow_html=True)
+        header_cols = st.columns(_COL_WIDTHS)
+        for i, (h_label, h_key) in enumerate(_SORT_COLS):
+            with header_cols[i]:
+                if h_key is None:
+                    st.markdown(
+                        f'<div style="font-weight:600;font-size:0.82rem;color:#888;'
+                        f'padding:4px 0;border-bottom:1px solid #333;">{h_label}</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    is_active = _cur_col == h_key
+                    arrow = (" ▲" if _cur_asc else " ▼") if is_active else ""
+                    if st.button(
+                        f"{h_label}{arrow}",
+                        key=f"sort_{cat['source']}_{h_key}",
+                        use_container_width=True,
+                    ):
+                        if _cur_col == h_key:
+                            st.session_state[_sd] = not _cur_asc
+                        else:
+                            st.session_state[_sk] = h_key
+                            st.session_state[_sd] = True
+                        st.rerun()
+
         # 資料列
         for row_idx, r in enumerate(rows):
             data_cols = st.columns([1.2, 1.2, 0.8, 1, 1.2, 1, 1, 1.2, 1.2, 1, 0.7])
