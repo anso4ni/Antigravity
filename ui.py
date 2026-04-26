@@ -592,11 +592,11 @@ def render_net_value(portfolio):
         cash_amt = cash_by_source.get(src, 0)
         total_cat = cd["market_value"] + cash_amt
 
+        # pct = stocks only (cash card accounts for cash separately → sum = 100%)
         if disp_mode == "Default":
-            cat_twd = cd.get("market_value_twd", 0) + cash_by_source_twd.get(src, 0)
-            pct = (cat_twd / total_for_pct * 100)
+            pct = (cd.get("market_value_twd", 0) / total_for_pct * 100)
         else:
-            pct = (total_cat / total_for_pct * 100)
+            pct = (cd["market_value"] / total_for_pct * 100)
 
         pl = cd["market_value"] - cd["cost"] if cd["cost"] > 0 else 0
         pl_pct = (pl / cd["cost"] * 100) if cd["cost"] > 0 else 0
@@ -1383,20 +1383,18 @@ def render_home_details(portfolio):
         if not cat_stocks:
             continue
 
-        src_cash_twd = cash_by_source_twd.get(cat["source"], 0)
 
-        # 計算此分類匯總（依顯示幣別），pct 分子含現金以對齊首頁卡片
+        # 計算此分類匯總（依顯示幣別），pct = 股票市值 / 總資產（不含現金，現金由現金卡片計算）
         if disp_mode == "Default":
             cat_native_currency = "TWD" if cat["source"] == "台股" else "USD"
             cat_mv = sum(s["market_value_twd"] if cat_native_currency == "TWD" else s["market_value_usd"] for s in cat_stocks)
             cat_cost = sum(_to_disp(s["avg_cost"] * s["shares"], s["currency"]) for s in cat_stocks)
             cat_mv_twd = sum(s["market_value_twd"] for s in cat_stocks)
-            pct = ((cat_mv_twd + src_cash_twd) / total_disp) * 100
+            pct = (cat_mv_twd / total_disp) * 100
         else:
             cat_mv = sum(s["market_value_twd"] if is_twd else s["market_value_usd"] for s in cat_stocks)
             cat_cost = sum(_to_disp(s["avg_cost"] * s["shares"], s["currency"]) for s in cat_stocks)
-            src_cash_disp = cash_by_source_disp.get(cat["source"], 0)
-            pct = ((cat_mv + src_cash_disp) / total_disp) * 100
+            pct = (cat_mv / total_disp) * 100
         cat_sym = _stock_sym(cat_stocks[0]["currency"]) if cat_stocks else sym
 
         pl = cat_mv - cat_cost
