@@ -66,48 +66,97 @@ DEFAULT_CONFIG = {
 
 
 def get_config_path():
-    """取得配置文件的完整路徑"""
+    """取得當前使用者的配置文件路徑"""
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_dir, CONFIG_FILE)
+    filename = "portfolio_config.json"
+    
+    try:
+        import streamlit as st
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        if get_script_run_ctx() is not None:
+            email = st.session_state.get("google_email", "")
+            if email:
+                safe_email = "".join(c if c.isalnum() else "_" for c in email)
+                filename = f"portfolio_data_{safe_email}.json"
+            else:
+                filename = "portfolio_data_anonymous.json"
+    except Exception:
+        pass
+        
+    return os.path.join(base_dir, filename)
+
+
+def get_shared_config_path():
+    """取得全域共用的系統配置文件路徑 (用於存儲 OAuth 金鑰路徑等)"""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "portfolio_config.json")
 
 
 def load_config():
-    """
-    讀取配置文件，若不存在則建立默認配置
-    Returns:
-        dict: 配置字典
-    """
+    """讀取配置文件，若不存在則建立默認配置"""
+    shared_path = get_shared_config_path()
+    shared_config = {}
+    if os.path.exists(shared_path):
+        try:
+            with open(shared_path, "r", encoding="utf-8") as f:
+                shared_config = json.load(f)
+        except Exception:
+            pass
+
     config_path = get_config_path()
+    
     if os.path.exists(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
-            # 補充缺失的默認欄位
             for key, value in DEFAULT_CONFIG.items():
                 if key not in config:
                     config[key] = value
-            return config
         except (json.JSONDecodeError, IOError) as e:
             print(f"⚠️ 配置文件讀取失敗，使用默認配置: {e}")
-            return DEFAULT_CONFIG.copy()
+            config = DEFAULT_CONFIG.copy()
     else:
-        save_config(DEFAULT_CONFIG)
-        return DEFAULT_CONFIG.copy()
+        config = DEFAULT_CONFIG.copy()
+        if "anonymous" not in config_path:
+            save_config(config)
+
+    # 確保全域 OAuth 設定強制套用
+    if "google_drive" in shared_config and "oauth_client_secrets_path" in shared_config["google_drive"]:
+        config.setdefault("google_drive", {})["oauth_client_secrets_path"] = shared_config["google_drive"]["oauth_client_secrets_path"]
+
+    return config
 
 
 def save_config(config):
-    """
-    保存配置到文件
-    Args:
-        config (dict): 配置字典
-    """
+    """保存配置到文件，並同步全域設定到共用設定檔"""
     config_path = get_config_path()
     config["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    try:
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
-    except IOError as e:
-        print(f"⚠️ 配置文件保存失敗: {e}")
+    
+    # 儲存使用者專屬檔案 (匿名者不存檔)
+    if "anonymous" not in config_path:
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except IOError as e:
+            print(f"⚠️ 配置文件保存失敗: {e}")
+
+    # 同步儲存全域設定到 portfolio_config.json
+    shared_path = get_shared_config_path()
+    shared_config = {}
+    if os.path.exists(shared_path):
+        try:
+            with open(shared_path, "r", encoding="utf-8") as f:
+                shared_config = json.load(f)
+        except Exception:
+            pass
+            
+    # 只有當設定中有 OAuth path 才更新
+    if "google_drive" in config and "oauth_client_secrets_path" in config["google_drive"]:
+        shared_config.setdefault("google_drive", {})["oauth_client_secrets_path"] = config["google_drive"]["oauth_client_secrets_path"]
+        try:
+            with open(shared_path, "w", encoding="utf-8") as f:
+                json.dump(shared_config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ 共用配置保存失敗: {e}")
 
 
 def add_stock_holding(config, symbol, name, market, shares, avg_cost, currency="TWD", note=""):

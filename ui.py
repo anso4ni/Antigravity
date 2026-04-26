@@ -1142,6 +1142,9 @@ def _render_google_drive_import(cfg):
         mod_time = selected_file.get("modifiedTime", "")[:10]
         st.caption(f"修改日期：{mod_time}")
 
+        st.warning("⚠️ 警告：系統將清除先前資料，並以新匯入的檔案完全覆寫！")
+        confirm = st.checkbox("我已了解系統將清除先前資料", key="gd_import_confirm")
+
         col_prev, col_imp = st.columns(2)
         with col_prev:
             if st.button("👁️ 預覽工作表", use_container_width=True, key="gd_import_preview"):
@@ -1161,7 +1164,7 @@ def _render_google_drive_import(cfg):
 
         with col_imp:
             if st.button("📥 匯入此檔案", use_container_width=True,
-                         key="gd_import_run", type="primary"):
+                         key="gd_import_run", type="primary", disabled=not confirm):
                 try:
                     with st.spinner(f"匯入 {selected_file['name']}…"):
                         file_bytes = google_drive.download_drive_file(

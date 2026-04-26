@@ -33,11 +33,14 @@ def main():
     # 4. 重新載入配置（確保最新）
     cfg = config.load_config()
 
-    # 5. 根據選擇的頁面渲染不同內容
     if page == "🏠 首頁":
         # 頂部即時指數 + Google 登入圖示
         ui.render_market_indices(cfg)
         
+        if not st.session_state.get("google_email"):
+            st.info("🔒 您目前處於未登入狀態。為了保護您的資產資料，本系統已實施帳號隔離。請點擊右上角「登入 Google」以載入專屬於您的投資組合。")
+            return
+            
         # 計算並顯示總資產淨值與頂部卡片
         portfolio = data.calculate_portfolio_value(cfg)
         ui.render_net_value(portfolio)
@@ -46,22 +49,36 @@ def main():
         ui.render_home_details(portfolio)
 
     elif page == "⚙️ 操作面板":
-        # 獨立的輸入資訊欄位與操作介面
+        if not st.session_state.get("google_email"):
+            st.warning("請先登入 Google 帳號以使用操作面板。")
+            return
         ui.render_operation_panel(cfg)
 
     elif page == "📦 持有資產":
+        if not st.session_state.get("google_email"):
+            st.warning("請先登入 Google 帳號以查看持有資產。")
+            return
         portfolio = data.calculate_portfolio_value(cfg)
         ui.render_asset_cards(portfolio)
         ui.render_stock_chart(cfg)
 
     elif page == "📝 資產明細":
+        if not st.session_state.get("google_email"):
+            st.warning("請先登入 Google 帳號以查看資產明細。")
+            return
         portfolio = data.calculate_portfolio_value(cfg)
         ui.render_asset_table(portfolio)
 
     elif page == "🧾 交易紀錄":
+        if not st.session_state.get("google_email"):
+            st.warning("請先登入 Google 帳號以查看交易紀錄。")
+            return
         ui.render_transaction_history(cfg)
 
     elif page == "📊 報酬分析":
+        if not st.session_state.get("google_email"):
+            st.warning("請先登入 Google 帳號以查看報酬分析。")
+            return
         ui.render_returns_analysis(cfg)
 
 

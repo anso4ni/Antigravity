@@ -489,8 +489,17 @@ def list_drive_files(client, folder_id=None, extensions=None, creds_dict=None):
         mime_filters = [
             f"mimeType='{mime_map[e]}'" for e in ext_lower if e in mime_map
         ]
-        if mime_filters:
-            q_parts.append(f"({' or '.join(mime_filters)})")
+        
+        # 若有要求 Excel，也一併搜尋 Google Sheets 格式
+        if ".xlsx" in ext_lower or ".xls" in ext_lower:
+            mime_filters.append("mimeType='application/vnd.google-apps.spreadsheet'")
+            
+        # 額外比對檔名結尾，涵蓋 MIME type 判定不準的檔案
+        name_filters = [f"name contains '{e}'" for e in ext_lower]
+        
+        combined_filters = mime_filters + name_filters
+        if combined_filters:
+            q_parts.append(f"({' or '.join(combined_filters)})")
 
     files = []
     page_token = None
@@ -511,6 +520,26 @@ def list_drive_files(client, folder_id=None, extensions=None, creds_dict=None):
         page_token = data.get("nextPageToken")
         if not page_token:
             break
+            
+    # 如果有用副檔名過濾，二次過濾 name_filters 可能混入的 "not_xlsx_but_has_.xlsx_in_middle.txt"
+    if extensions:
+        ext_lower = [e.lower() for e in extensions]
+        filtered_files = []
+        for f in files:
+            is_valid_mime = False
+            for e in ext_lower:
+                if e in mime_map and f.get("mimeType") == mime_map[e]:
+                    is_valid_mime = True
+            if f.get("mimeType") == "application/vnd.google-apps.spreadsheet":
+                is_valid_mime = True
+                
+            name_lower = f.get("name", "").lower()
+            has_valid_ext = any(name_lower.endswith(e) for e in ext_lower)
+            
+            if is_valid_mime or has_valid_ext:
+                filtered_files.append(f)
+        files = filtered_files
+        
     return files
 
 
@@ -519,10 +548,27 @@ def download_drive_file(client, file_id, creds_dict=None):
     下載 Google Drive 檔案內容，回傳 bytes
     """
     session = _drive_session(client, creds_dict)
-    resp = session.get(
-        f"https://www.googleapis.com/drive/v3/files/{file_id}",
-        params={"alt": "media"},
-    )
+    
+    # 取得檔案 metadata 以判斷是否為 Google Sheets
+    meta_resp = session.get(f"https://www.googleapis.com/drive/v3/files/{file_id}?fields=mimeType")
+    if meta_resp.status_code != 200:
+        raise Exception(f"無法取得檔案資訊 ({meta_resp.status_code}): {meta_resp.text}")
+        
+    mime_type = meta_resp.json().get("mimeType", "")
+    
+    if mime_type == "application/vnd.google-apps.spreadsheet":
+        # Google Sheets 必須用匯出功能轉成 Excel
+        resp = session.get(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}/export",
+            params={"mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+        )
+    else:
+        # 一般檔案直接下載
+        resp = session.get(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}",
+            params={"alt": "media"},
+        )
+
     if resp.status_code != 200:
         raise Exception(f"下載失敗 ({resp.status_code}): {resp.text}")
     return resp.content

@@ -99,10 +99,24 @@ def get_market_indices():
             pass
         return {"symbol": symbol, "name": name, "price": 0, "change": 0, "change_pct": 0}
 
-    results = []
-    for idx in indices:
-        results.append(_fetch_index(idx["symbol"], idx["name"]))
-    results.append(_fetch_index("^TWII", "台灣加權指數"))
+    import concurrent.futures
+
+    results_dict = {}
+    indices.append({"symbol": "^TWII", "name": "台灣加權指數"})
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+        future_to_idx = {
+            executor.submit(_fetch_index, idx["symbol"], idx["name"]): idx
+            for idx in indices
+        }
+        for future in concurrent.futures.as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                results_dict[idx["symbol"]] = future.result()
+            except Exception:
+                results_dict[idx["symbol"]] = {"symbol": idx["symbol"], "name": idx["name"], "price": 0, "change": 0, "change_pct": 0}
+
+    results = [results_dict[idx["symbol"]] for idx in indices]
 
     _set_cached(cache_key, results)
     return results
@@ -139,18 +153,15 @@ def get_stock_price(symbol):
             _set_cached(cache_key, alt_result)
             return alt_result
 
-    if not pd.isna(price) and price > 0:
-        _set_cached(cache_key, result)
+    # 不論有無抓到有效價格，都寫入快取，避免切換頁面時重複等待 Timeout
+    _set_cached(cache_key, result)
     return result
 
-
-_twstock_initialized = False
 
 def _fetch_price(symbol):
     """
     實際從 yfinance 獲取價格的內部函式，並利用 twstock 補充台股即時報價
     """
-    global _twstock_initialized
     try:
         current_price = None
         prev_close = 0
@@ -198,9 +209,6 @@ def _fetch_price(symbol):
         if symbol.endswith(".TW") or symbol.endswith(".TWO"):
             try:
                 import twstock
-                if not _twstock_initialized:
-                    twstock.__update_codes()
-                    _twstock_initialized = True
 
                 tw_code = symbol.replace(".TW", "").replace(".TWO", "")
                 rt = twstock.realtime.get(tw_code)
@@ -317,7 +325,8 @@ def get_usd_twd_rate():
     except Exception:
         pass
 
-    # 備用匯率
+    # 備用匯率也寫入快取，避免重複等待 timeout
+    _set_cached(cache_key, 32.0)
     return 32.0
 
 
@@ -334,13 +343,26 @@ def calculate_portfolio_value(config):
         dict: 資產明細
     """
     display_currency = config.get("display_currency", "TWD")
-    usd_twd_rate = get_usd_twd_rate()
 
     stock_details = []
     total_stock_value_twd = 0.0
     total_stock_value_usd = 0.0
 
-    for holding in config.get("stock_holdings", []):
+    holdings = config.get("stock_holdings", [])
+    
+    # 預先並發獲取所有股票價格以加速 (會自動寫入內部 _cache)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+        # 並發獲取匯率
+        future_rate = executor.submit(get_usd_twd_rate)
+        # 並發獲取股票價格
+        if holdings:
+            symbols_to_fetch = list(set([h["symbol"] for h in holdings]))
+            list(executor.map(get_stock_price, symbols_to_fetch))
+            
+    usd_twd_rate = future_rate.result()
+
+    for holding in holdings:
         symbol = holding["symbol"]
         shares = holding["shares"]
         avg_cost = holding["avg_cost"]
