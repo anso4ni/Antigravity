@@ -437,9 +437,11 @@ def render_net_value(portfolio):
 
     col_val, col_switch, col_refresh = st.columns([5, 1, 1.2])
     with col_switch:
+        _cur_options = ["Default", "TWD", "USD"]
+        _cur_idx = _cur_options.index(display_currency) if display_currency in _cur_options else 0
         new_currency = st.selectbox(
-            "幣值", ["TWD", "USD"],
-            index=0 if display_currency == "TWD" else 1,
+            "幣值", _cur_options,
+            index=_cur_idx,
             key="currency_select",
             label_visibility="collapsed",
         )
@@ -477,17 +479,17 @@ def render_net_value(portfolio):
 
     with col_val:
         def safe_val(v): return 0 if pd.isna(v) else v
-        
-        if display_currency == "TWD":
-            total = safe_val(portfolio["total_value_twd"])
-            sym = "NT$"
-            stock_val = safe_val(portfolio["total_stock_value_twd"])
-            cash_val = safe_val(portfolio["total_cash_twd"])
-        else:
+
+        if display_currency == "USD":
             total = safe_val(portfolio["total_value_usd"])
             sym = "US$"
             stock_val = safe_val(portfolio["total_stock_value_usd"])
             cash_val = safe_val(portfolio["total_cash_usd"])
+        else:  # "TWD" or "Default" → aggregate in TWD
+            total = safe_val(portfolio["total_value_twd"])
+            sym = "NT$"
+            stock_val = safe_val(portfolio["total_stock_value_twd"])
+            cash_val = safe_val(portfolio["total_cash_twd"])
 
         rate = portfolio['usd_twd_rate']
         st.markdown(f'''
@@ -509,53 +511,72 @@ def render_net_value(portfolio):
 
     # 依 source 分組計算市值
     cat_data = {}
-    is_twd = display_currency == "TWD"
-    
+    disp_mode = display_currency  # "Default", "TWD", "USD"
+
+    def _eff_twd_stock(s):
+        if disp_mode == "TWD": return True
+        if disp_mode == "USD": return False
+        return s["currency"] == "TWD"  # Default: native currency
+
+    def _src_sym(src):
+        if disp_mode == "TWD": return "NT$"
+        if disp_mode == "USD": return "US$"
+        return "NT$" if src == "台股" else "US$"  # Default: native
+
     for s in stocks:
         src = s.get("source", "其他")
-        mv = s.get("market_value_twd", 0) if is_twd else s.get("market_value_usd", 0)
+        eff_twd = _eff_twd_stock(s)
+        mv = s.get("market_value_twd", 0) if eff_twd else s.get("market_value_usd", 0)
         if pd.isna(mv): mv = 0
-        
+
         if src not in cat_data:
-            cat_data[src] = {"market_value": 0, "cost": 0, "count": 0, "day_change": 0}
-        
+            cat_data[src] = {"market_value": 0, "cost": 0, "count": 0, "day_change": 0, "market_value_twd": 0}
+
         cat_data[src]["market_value"] += mv
-        
-        # 成本
+        cat_data[src]["market_value_twd"] += (s.get("market_value_twd", 0) or 0)
+
         cost_orig = s["avg_cost"] * s["shares"]
         if pd.isna(cost_orig): cost_orig = 0
-        if is_twd:
+        if eff_twd:
             cost = cost_orig if s["currency"] == "TWD" else cost_orig * rate
         else:
             cost = cost_orig if s["currency"] == "USD" else cost_orig / rate
         cat_data[src]["cost"] += cost
-        
-        # 日漲跌
+
         chg = s.get("change", 0)
         if pd.isna(chg): chg = 0
         day_change_orig = chg * s["shares"]
-        if is_twd:
+        if eff_twd:
             day_change = day_change_orig if s["currency"] == "TWD" else day_change_orig * rate
         else:
             day_change = day_change_orig if s["currency"] == "USD" else day_change_orig / rate
         cat_data[src]["day_change"] += day_change
-        
+
         cat_data[src]["count"] += 1
 
     # 加入現金
     cash_by_source = {}
+    cash_by_source_twd = {}
     for c in cash_holdings:
         src = c.get("source", "其他")
-        if is_twd:
-            amt = c["amount"] if c["currency"] == "TWD" else c["amount"] * rate
-        else:
+        amt_twd = c["amount"] if c["currency"] == "TWD" else c["amount"] * rate
+        if disp_mode == "TWD":
+            amt = amt_twd
+        elif disp_mode == "USD":
             amt = c["amount"] if c["currency"] == "USD" else c["amount"] / rate
+        else:  # Default: native
+            amt = c["amount"]
         cash_by_source[src] = cash_by_source.get(src, 0) + amt
+        cash_by_source_twd[src] = cash_by_source_twd.get(src, 0) + amt_twd
 
     total_cleaned_mv = sum(cd["market_value"] for cd in cat_data.values())
     total_cleaned_cash = sum(cash_by_source.values())
-    total_disp = total_cleaned_mv + total_cleaned_cash
-    if total_disp <= 0: total_disp = 1
+    total_value_twd = safe_val(portfolio["total_value_twd"])
+    if disp_mode == "Default":
+        total_for_pct = total_value_twd if total_value_twd > 0 else 1
+    else:
+        total_for_pct = total_cleaned_mv + total_cleaned_cash
+        if total_for_pct <= 0: total_for_pct = 1
 
     # 定義顯示順序和圖示（含 anchor id）
     cat_order = [
@@ -567,40 +588,50 @@ def render_net_value(portfolio):
     # 準備各分類數據
     cat_cards_data = []
     for src, icon, anchor in cat_order:
-        cd = cat_data.get(src, {"market_value": 0, "cost": 0, "count": 0, "day_change": 0})
+        cd = cat_data.get(src, {"market_value": 0, "cost": 0, "count": 0, "day_change": 0, "market_value_twd": 0})
         cash_amt = cash_by_source.get(src, 0)
         total_cat = cd["market_value"] + cash_amt
-        pct = (total_cat / total_disp * 100)
-        
+
+        if disp_mode == "Default":
+            cat_twd = cd.get("market_value_twd", 0) + cash_by_source_twd.get(src, 0)
+            pct = (cat_twd / total_for_pct * 100)
+        else:
+            pct = (total_cat / total_for_pct * 100)
+
         pl = cd["market_value"] - cd["cost"] if cd["cost"] > 0 else 0
         pl_pct = (pl / cd["cost"] * 100) if cd["cost"] > 0 else 0
-        
-        # 損益顏色 (台股習慣: 上漲紅、下跌綠)
+
         pl_color = "#ff1744" if pl >= 0 else "#00e676"
         pl_sign = "+" if pl >= 0 else ""
-        
-        # 日漲跌顏色與 % 數
+
         dc = cd.get("day_change", 0)
         prev_mv = cd["market_value"] - dc
         dc_pct = (dc / prev_mv * 100) if prev_mv > 0 else 0
         dc_color = "#ff1744" if dc >= 0 else "#00e676"
         dc_sign = "+" if dc >= 0 else ""
-        
+
         cat_cards_data.append({
             "icon": icon, "src": src, "anchor": anchor, "total": total_cat, "pct": pct,
+            "sym": _src_sym(src),
             "count": cd["count"], "mv": cd["market_value"],
             "pl": pl, "pl_pct": pl_pct, "pl_color": pl_color, "pl_sign": pl_sign,
             "dc": dc, "dc_pct": dc_pct, "dc_color": dc_color, "dc_sign": dc_sign,
         })
 
-    # 現金
-    total_cash_disp = portfolio["total_cash_twd"] if is_twd else portfolio["total_cash_usd"]
-    cash_pct = (total_cash_disp / total_disp * 100)
+    # 現金卡片
+    if disp_mode == "USD":
+        total_cash_disp = safe_val(portfolio["total_cash_usd"])
+        cash_sym = "US$"
+    else:
+        total_cash_disp = safe_val(portfolio["total_cash_twd"])
+        cash_sym = "NT$"
+    cash_pct = (safe_val(portfolio["total_cash_twd"]) / total_for_pct * 100) if disp_mode == "Default" else (total_cash_disp / total_for_pct * 100)
 
     # 使用 st.columns 渲染
     cols = st.columns(len(cat_cards_data) + 1)
     for i, cd in enumerate(cat_cards_data):
         with cols[i]:
+            card_sym = cd["sym"]
             st.markdown(f'''
             <a href="#{cd['anchor']}" style="text-decoration: none; color: inherit; display: block; height: 100%;">
             <div class="cat-card" style="transition: transform 0.2s; cursor: pointer;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">
@@ -608,9 +639,9 @@ def render_net_value(portfolio):
                     <span class="cat-card-name">{cd["icon"]} {cd["src"]}</span>
                     <span class="cat-card-pct">{cd["pct"]:.1f}%</span>
                 </div>
-                <div class="cat-card-value">{sym} {cd["total"]:,.0f}</div>
+                <div class="cat-card-value">{card_sym} {cd["total"]:,.0f}</div>
                 <div class="cat-card-detail">
-                    持倉 {cd["count"]} 檔 · {sym} {cd["mv"]:,.0f}<br>
+                    持倉 {cd["count"]} 檔 · {card_sym} {cd["mv"]:,.0f}<br>
                     <span style="color:{cd["pl_color"]}">損益 {cd["pl_sign"]}{cd["pl"]:,.0f} ({cd["pl_sign"]}{cd["pl_pct"]:.1f}%)</span><br>
                     <span style="color:{cd["dc_color"]}">今日 {cd["dc_sign"]}{cd["dc"]:,.0f} ({cd["dc_sign"]}{cd["dc_pct"]:.2f}%)</span>
                 </div>
@@ -626,7 +657,7 @@ def render_net_value(portfolio):
                 <span class="cat-card-name">💵 現金</span>
                 <span class="cat-card-pct">{cash_pct:.1f}%</span>
             </div>
-            <div class="cat-card-value">{sym} {total_cash_disp:,.0f}</div>
+            <div class="cat-card-value">{cash_sym} {total_cash_disp:,.0f}</div>
             <div class="cat-card-detail">
                 {len(cash_holdings)} 個帳戶
             </div>
@@ -1298,17 +1329,31 @@ def render_home_details(portfolio):
     stocks = portfolio.get("stock_details", [])
     cash_holdings = portfolio.get("cash_holdings", [])
     rate = portfolio['usd_twd_rate']
-    is_twd = portfolio.get("display_currency", "TWD") == "TWD"
-    sym = "NT$" if is_twd else "US$"
-    total_disp = (portfolio["total_value_twd"] if is_twd else portfolio["total_value_usd"])
+    disp_mode = portfolio.get("display_currency", "Default")
+    is_twd = disp_mode == "TWD"
+    sym = "NT$" if is_twd else ("US$" if disp_mode == "USD" else "NT$")
+    # For pct base: Default and TWD both use TWD total
+    total_disp = (portfolio["total_value_usd"] if disp_mode == "USD" else portfolio["total_value_twd"])
     total_disp = total_disp if total_disp > 0 else 1
 
+    def _stock_sym(stock_currency):
+        if disp_mode == "Default":
+            return "NT$" if stock_currency == "TWD" else "US$"
+        return sym
+
     def _to_disp(amount, stock_currency):
-        """將金額從股票原幣轉換為顯示幣別"""
+        if disp_mode == "Default":
+            return amount  # keep native currency, no conversion
         if is_twd:
             return amount if stock_currency == "TWD" else amount * rate
         else:
             return amount if stock_currency == "USD" else amount / rate
+
+    def _to_pct_base(amount, stock_currency):
+        """Always convert to TWD for pct calculation in Default mode."""
+        if disp_mode == "Default":
+            return amount if stock_currency == "TWD" else amount * rate
+        return _to_disp(amount, stock_currency)
 
     # 定義分類與其對應的顏色、圖示
     categories = [
@@ -1324,13 +1369,19 @@ def render_home_details(portfolio):
             continue
 
         # 計算此分類匯總（依顯示幣別）
-        cat_mv = sum(
-            s["market_value_twd"] if is_twd else s["market_value_usd"]
-            for s in cat_stocks
-        )
-        cat_cost = sum(_to_disp(s["avg_cost"] * s["shares"], s["currency"]) for s in cat_stocks)
+        if disp_mode == "Default":
+            # native currency per source: 台股→TWD, others→USD
+            cat_native_currency = "TWD" if cat["source"] == "台股" else "USD"
+            cat_mv = sum(s["market_value_twd"] if cat_native_currency == "TWD" else s["market_value_usd"] for s in cat_stocks)
+            cat_cost = sum(_to_disp(s["avg_cost"] * s["shares"], s["currency"]) for s in cat_stocks)
+            cat_mv_twd = sum(s["market_value_twd"] for s in cat_stocks)
+            pct = (cat_mv_twd / total_disp) * 100
+        else:
+            cat_mv = sum(s["market_value_twd"] if is_twd else s["market_value_usd"] for s in cat_stocks)
+            cat_cost = sum(_to_disp(s["avg_cost"] * s["shares"], s["currency"]) for s in cat_stocks)
+            pct = (cat_mv / total_disp) * 100
+        cat_sym = _stock_sym(cat_stocks[0]["currency"]) if cat_stocks else sym
 
-        pct = (cat_mv / total_disp) * 100
         pl = cat_mv - cat_cost
         pl_pct = (pl / cat_cost * 100) if cat_cost > 0 else 0
         pl_color = "#00e676" if pl >= 0 else "#ff1744"
@@ -1342,10 +1393,10 @@ def render_home_details(portfolio):
             <h3 style="margin-bottom:0;">{cat["name"]}</h3>
             <div class="home-detail-bar" style="border-left-color: {cat["color"]}">
                 <span class="home-detail-pct">{pct:.1f}%</span>
-                <span class="home-detail-val">{sym} {cat_mv:,.0f}</span>
-                <span class="home-detail-inv">投入: {sym} {cat_cost:,.0f}</span>
+                <span class="home-detail-val">{cat_sym} {cat_mv:,.0f}</span>
+                <span class="home-detail-inv">投入: {cat_sym} {cat_cost:,.0f}</span>
                 <span class="home-detail-pl" style="color: {pl_color}">
-                    P&L: {pl_sign}{sym} {abs(pl):,.0f} ({pl_sign}{pl_pct:.2f}%)
+                    P&L: {pl_sign}{cat_sym} {abs(pl):,.0f} ({pl_sign}{pl_pct:.2f}%)
                 </span>
             </div>
         </div>
@@ -1383,6 +1434,7 @@ def render_home_details(portfolio):
                 "pl_pct": s_pl_pct,
                 "price_color": price_color,
                 "pl_color": pl_val_color,
+                "s_sym": _stock_sym(s["currency"]),
                 "currency": s["currency"],
                 "market": s.get("market", ""),
                 "source": s.get("source", ""),
@@ -1493,15 +1545,20 @@ def render_home_details(portfolio):
 
     # 現金區塊
     if cash_holdings:
-        total_cash_disp = portfolio["total_cash_twd"] if is_twd else portfolio["total_cash_usd"]
-        cash_pct = (total_cash_disp / total_disp) * 100
+        if disp_mode == "USD":
+            total_cash_disp = portfolio["total_cash_usd"]
+            cash_sym_h = "US$"
+        else:
+            total_cash_disp = portfolio["total_cash_twd"]
+            cash_sym_h = "NT$"
+        cash_pct = (portfolio["total_cash_twd"] / total_disp) * 100
 
         st.markdown(f'''
         <div id="cat-cash">
             <h3 style="margin-bottom:0;">💵 現金部位</h3>
             <div class="home-detail-bar" style="border-left-color: #fbc02d">
                 <span class="home-detail-pct">{cash_pct:.1f}%</span>
-                <span class="home-detail-val">{sym} {total_cash_disp:,.0f}</span>
+                <span class="home-detail-val">{cash_sym_h} {total_cash_disp:,.0f}</span>
                 <span class="home-detail-inv">總現金</span>
             </div>
         </div>
@@ -1509,28 +1566,28 @@ def render_home_details(portfolio):
 
         cash_rows = []
         for c in cash_holdings:
-            if is_twd:
-                amt_disp = c["amount"] if c["currency"] == "TWD" else c["amount"] * rate
-                disp_label = "折合台幣"
-            else:
+            if disp_mode == "USD":
                 amt_disp = c["amount"] / rate if c["currency"] == "TWD" else c["amount"]
                 disp_label = "折合美元"
+            elif disp_mode == "TWD":
+                amt_disp = c["amount"] if c["currency"] == "TWD" else c["amount"] * rate
+                disp_label = "折合台幣"
+            else:  # Default: show native, no conversion column
+                amt_disp = c["amount"]
+                disp_label = "金額"
             cash_rows.append({
                 "帳戶/來源": c.get("source", "現金"),
                 "備註": c.get("note", ""),
                 "幣別": c["currency"],
-                "原幣金額": round(c["amount"], 2),
                 disp_label: round(amt_disp, 2),
             })
 
         df_cash = pd.DataFrame(cash_rows)
-        disp_col = "折合台幣" if is_twd else "折合美元"
         st.dataframe(
             df_cash,
             use_container_width=True,
             hide_index=True,
             column_config={
-                "原幣金額": st.column_config.NumberColumn(format="%,.2f"),
-                disp_col: st.column_config.NumberColumn(format="%,.2f"),
+                disp_label: st.column_config.NumberColumn(format="%,.2f"),
             }
         )

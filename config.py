@@ -12,7 +12,7 @@ CONFIG_FILE = "portfolio_config.json"
 
 # 默认配置模板
 DEFAULT_CONFIG = {
-    "display_currency": "TWD",  # TWD 或 USD
+    "display_currency": "Default",  # Default / TWD / USD
     "cash_holdings": [
         {"currency": "TWD", "amount": 0.0, "note": "台幣現金"},
         {"currency": "USD", "amount": 0.0, "note": "美元現金"},
