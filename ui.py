@@ -879,6 +879,57 @@ def render_transaction_history(cfg):
     else:
         st.info("尚無交易紀錄。")
 
+    # ── XIRR 分析 ────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown('<div class="section-title">📈 XIRR 年化報酬率（現有持股）</div>', unsafe_allow_html=True)
+
+    with st.spinner("計算 XIRR…"):
+        xirr_rows, overall_xirr = data.calculate_xirr_data(cfg)
+
+    if not xirr_rows:
+        st.info("無足夠交易資料計算 XIRR。")
+        return
+
+    # 整體 XIRR 大卡片
+    if overall_xirr is not None:
+        color = "#00e676" if overall_xirr >= 0 else "#ff1744"
+        st.markdown(f'''
+        <div style="background:rgba(255,255,255,0.04);border-radius:12px;padding:16px 24px;
+                    display:inline-block;margin-bottom:16px;border:1px solid rgba(255,255,255,0.1);">
+            <div style="color:#888;font-size:0.85rem;">整體持股 XIRR（年化）</div>
+            <div style="font-size:2rem;font-weight:700;color:{color};">{overall_xirr*100:+.2f}%</div>
+        </div>
+        ''', unsafe_allow_html=True)
+
+    # 逐檔明細表
+    def _fmt_xirr(v):
+        if v is None:
+            return "—"
+        color = "#00e676" if v >= 0 else "#ff1744"
+        return f'<span style="color:{color};font-weight:600;">{v*100:+.2f}%</span>'
+
+    def _sym_label(src):
+        if src == "台股": return "NT$"
+        return "US$"
+
+    rows_display = []
+    for r in xirr_rows:
+        sym_label = _sym_label(r["source"])
+        rows_display.append({
+            "代碼": r["symbol"],
+            "名稱": r["name"],
+            "來源": r["source"],
+            "現值": f'{sym_label} {r["current_mv"]:,.0f}',
+            "交易筆數": r["txn_count"],
+            "XIRR（年化）": _fmt_xirr(r["xirr"]),
+        })
+
+    df_xirr = pd.DataFrame(rows_display)
+    st.write(
+        df_xirr.to_html(escape=False, index=False),
+        unsafe_allow_html=True,
+    )
+
 
 def render_returns_analysis(cfg):
     """渲染報酬分析"""

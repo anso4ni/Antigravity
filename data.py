@@ -7,7 +7,7 @@
 
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import time
 
 # ============================================================
@@ -516,3 +516,152 @@ def calculate_transaction_returns(config):
         })
 
     return results
+
+
+# ============================================================
+# XIRR
+# ============================================================
+
+def _xirr(cashflows):
+    """
+    cashflows: list of (date, float) — negative = outflow, positive = inflow.
+    Returns annualised rate (float) or None if it cannot converge.
+    Uses Newton-Raphson with bisection fallback.
+    """
+    if len(cashflows) < 2:
+        return None
+    dates, amounts = zip(*cashflows)
+    if all(a >= 0 for a in amounts) or all(a <= 0 for a in amounts):
+        return None
+
+    t0 = min(dates)
+    years = [(d - t0).days / 365.25 for d in dates]
+
+    def npv(r):
+        return sum(a / (1 + r) ** t for a, t in zip(amounts, years))
+
+    def dnpv(r):
+        return -sum(t * a / (1 + r) ** (t + 1) for a, t in zip(amounts, years))
+
+    # Newton-Raphson
+    r = 0.1
+    for _ in range(200):
+        f = npv(r)
+        df = dnpv(r)
+        if abs(df) < 1e-12:
+            break
+        step = f / df
+        r -= step
+        if r <= -1:
+            r = -0.9999
+        if abs(step) < 1e-9:
+            break
+
+    if -0.9999 < r < 100 and abs(npv(r)) < 1e-4:
+        return r
+
+    # Bisection fallback
+    try:
+        lo, hi = -0.9999, 10.0
+        if npv(lo) * npv(hi) > 0:
+            return None
+        for _ in range(200):
+            mid = (lo + hi) / 2
+            if npv(lo) * npv(mid) <= 0:
+                hi = mid
+            else:
+                lo = mid
+            if hi - lo < 1e-9:
+                break
+        r = (lo + hi) / 2
+        return r if -0.9999 < r < 100 else None
+    except Exception:
+        return None
+
+
+def calculate_xirr_data(cfg):
+    """
+    計算現有持股的 XIRR（以交易明細為現金流，現值為終值）。
+    Returns:
+        (rows, overall_xirr)
+        rows: list of dict per symbol
+        overall_xirr: float or None
+    """
+    transactions = cfg.get("transactions", [])
+    holdings = cfg.get("stock_holdings", [])
+    if not transactions or not holdings:
+        return [], None
+
+    portfolio = calculate_portfolio_value(cfg)
+    rate = portfolio["usd_twd_rate"]
+    today = date.today()
+
+    # current market value per symbol (native currency)
+    mv_by_symbol = {
+        s["symbol"]: s["market_value"]
+        for s in portfolio.get("stock_details", [])
+    }
+
+    # group transactions by symbol
+    txn_by_symbol: dict = {}
+    for t in transactions:
+        txn_by_symbol.setdefault(t["symbol"], []).append(t)
+
+    rows = []
+    all_cf_twd: list = []  # for overall XIRR (all in TWD)
+
+    held_symbols = {h["symbol"] for h in holdings}
+
+    for sym, txns in txn_by_symbol.items():
+        if sym not in held_symbols:
+            continue
+        current_mv = mv_by_symbol.get(sym, 0)
+        if current_mv <= 0:
+            continue
+
+        currency = txns[0].get("currency", "TWD")
+        cashflows = []
+        for t in txns:
+            try:
+                d = datetime.strptime(t["date"], "%Y-%m-%d").date()
+            except (ValueError, KeyError):
+                continue
+            cost = float(t["shares"]) * float(t["price"])
+            fee = float(t.get("fee") or 0)
+            tax = float(t.get("tax") or 0)
+            if t["action"] == "BUY":
+                amount = -(cost + fee + tax)
+            else:
+                amount = cost - fee - tax
+            cashflows.append((d, amount))
+
+        # terminal value: current market value
+        cashflows.append((today, current_mv))
+
+        xirr_val = _xirr(cashflows)
+
+        # convert to TWD for overall XIRR
+        to_twd = rate if currency == "USD" else 1.0
+        for d, a in cashflows[:-1]:
+            all_cf_twd.append((d, a * to_twd))
+        # terminal value added separately at the end
+
+        rows.append({
+            "symbol": sym,
+            "name": txns[0].get("name", sym),
+            "source": next((h.get("source", "") for h in holdings if h["symbol"] == sym), ""),
+            "currency": currency,
+            "current_mv": round(current_mv, 2),
+            "txn_count": len(txns),
+            "xirr": xirr_val,
+        })
+
+    # overall XIRR: all transaction CFs + total current MV as terminal value
+    total_mv_twd = portfolio.get("total_stock_value_twd", 0)
+    overall_xirr = None
+    if all_cf_twd and total_mv_twd > 0:
+        all_cf_twd.append((today, total_mv_twd))
+        overall_xirr = _xirr(all_cf_twd)
+
+    rows.sort(key=lambda r: r["symbol"])
+    return rows, overall_xirr
