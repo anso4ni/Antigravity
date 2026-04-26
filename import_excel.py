@@ -55,8 +55,8 @@ def import_all():
 
 
 def _parse_holdings_sheet(excel_path):
-    """解析 '個股 0414' — 持倉資料，FT 與複委託分開"""
-    df = pd.read_excel(excel_path, sheet_name="個股 0414", header=None)
+    """解析 '個股持倉' — 持倉資料，FT 與複委託分開"""
+    df = pd.read_excel(excel_path, sheet_name="個股持倉", header=None)
     holdings = []
 
     # --- 台股 (rows 3~18) ---
@@ -132,8 +132,8 @@ def _parse_holdings_sheet(excel_path):
 
 
 def _parse_cash(excel_path):
-    """解析 '個股 0414' — 銀行現金 + 美股現金"""
-    df = pd.read_excel(excel_path, sheet_name="個股 0414", header=None)
+    """解析 '個股持倉' — 銀行現金 + 美股現金"""
+    df = pd.read_excel(excel_path, sheet_name="個股持倉", header=None)
     cash_list = []
 
     # 台幣銀行帳戶 (rows 7~10)
@@ -244,6 +244,45 @@ def import_all_from_bytes(file_bytes, cfg):
         "cash": len(cash_holdings),
         "transactions": len(transactions),
     }
+
+
+def import_holdings_from_bytes(file_bytes, cfg):
+    """
+    從 bytes 匯入持倉 + 現金，不動交易紀錄。
+    Returns: {"holdings": n, "cash": n}
+    """
+    import io
+    import config as _config
+
+    buf = io.BytesIO(file_bytes)
+    holdings = _parse_holdings_sheet(buf)
+    buf.seek(0)
+    cash_holdings = _parse_cash(buf)
+
+    cfg["stock_holdings"] = holdings
+    cfg["cash_holdings"] = cash_holdings
+    cfg["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _config.save_config(cfg)
+
+    return {"holdings": len(holdings), "cash": len(cash_holdings)}
+
+
+def import_transactions_from_bytes(file_bytes, cfg):
+    """
+    從 bytes 匯入交易紀錄，不動持倉/現金。
+    Returns: {"transactions": n, "records": [list of transaction dicts]}
+    """
+    import io
+    import config as _config
+
+    buf = io.BytesIO(file_bytes)
+    transactions = _parse_transactions_sheet(buf)
+
+    cfg["transactions"] = transactions
+    cfg["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _config.save_config(cfg)
+
+    return {"transactions": len(transactions), "records": transactions}
 
 
 if __name__ == "__main__":

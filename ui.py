@@ -1053,6 +1053,69 @@ def _render_manage_holdings(cfg):
         st.info("目前無持倉")
 
 
+def _render_drive_picker(oauth_client, creds, key_prefix):
+    """
+    可重用的 Google Drive 資料夾瀏覽器 + Excel 檔案選擇器。
+    key_prefix: session_state 的命名空間前綴 (e.g. "gd_hold" / "gd_txn")
+    Returns: list of excel_file dicts in current folder
+    """
+    stack_key = f"{key_prefix}_folder_stack"
+    if stack_key not in st.session_state:
+        st.session_state[stack_key] = []
+
+    folder_stack = st.session_state[stack_key]
+    parent_id = folder_stack[-1]["id"] if folder_stack else None
+    crumbs = ["📁 My Drive"] + [f["name"] for f in folder_stack]
+    st.caption("資料夾路徑：" + " / ".join(crumbs))
+
+    sf_key = f"{key_prefix}_sf_{parent_id}"
+    xl_key = f"{key_prefix}_xl_{parent_id}"
+    if sf_key not in st.session_state:
+        with st.spinner("載入資料夾…"):
+            st.session_state[sf_key] = google_drive.list_drive_folders(
+                oauth_client, parent_id=parent_id, creds_dict=creds
+            )
+    if xl_key not in st.session_state:
+        with st.spinner("載入 Excel 檔案…"):
+            st.session_state[xl_key] = google_drive.list_drive_files(
+                oauth_client, folder_id=parent_id, extensions=[".xlsx", ".xls"], creds_dict=creds
+            )
+    subfolders = st.session_state.get(sf_key) or []
+    excel_files = st.session_state.get(xl_key) or []
+
+    col_fsel, col_finto, col_fup, col_fref = st.columns([5, 1, 1, 1])
+    with col_fsel:
+        folder_options = ["📁 此資料夾"] + [("📂 " + f["name"]) for f in subfolders]
+        folder_nav_idx = st.selectbox(
+            "子資料夾", range(len(folder_options)),
+            format_func=lambda i: folder_options[i],
+            key=f"{key_prefix}_folder_nav",
+            label_visibility="collapsed",
+        )
+    with col_finto:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if folder_nav_idx > 0:
+            if st.button("📂 進入", key=f"{key_prefix}_into"):
+                sel = subfolders[folder_nav_idx - 1]
+                st.session_state[stack_key].append({"id": sel["id"], "name": sel["name"]})
+                st.rerun()
+    with col_fup:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if folder_stack:
+            if st.button("⬆️ 返回", key=f"{key_prefix}_up"):
+                st.session_state[stack_key].pop()
+                st.rerun()
+    with col_fref:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if st.button("🔄", key=f"{key_prefix}_refresh", help="重新整理"):
+            for k in list(st.session_state.keys()):
+                if k.startswith(f"{key_prefix}_sf_") or k.startswith(f"{key_prefix}_xl_"):
+                    del st.session_state[k]
+            st.rerun()
+
+    return excel_files
+
+
 def _render_google_drive_import(cfg):
     """Google 雲端硬碟匯入功能"""
     st.markdown("#### ☁️ Google 雲端匯入")
@@ -1091,129 +1154,132 @@ def _render_google_drive_import(cfg):
         st.info("登入 Google 後即可使用匯入與備份功能")
         return
 
-    # ── 從 Google Drive 選取 Excel 檔案匯入 ─────────────────────────
+    # ── 從 Google Drive 匯入 ─────────────────────────────────────
     st.markdown("---")
-    st.markdown("##### 📂 從 Google Drive 匯入 Excel")
+    st.markdown("##### 📂 從 Google Drive 匯入")
 
-    # 資料夾瀏覽器（使用獨立 key，與備份區塊不衝突）
-    if "gd_import_folder_stack" not in st.session_state:
-        st.session_state.gd_import_folder_stack = []
-
-    import_parent_id = (
-        st.session_state.gd_import_folder_stack[-1]["id"]
-        if st.session_state.gd_import_folder_stack else None
-    )
-    crumbs = ["📁 My Drive"] + [f["name"] for f in st.session_state.gd_import_folder_stack]
-    st.caption("資料夾路徑：" + " / ".join(crumbs))
-
-    # 同時載入子資料夾和 Excel 檔案
-    sf_key = f"gd_import_sf_{import_parent_id}"
-    xl_key = f"gd_import_xl_{import_parent_id}"
     _creds = st.session_state.get("google_creds")
-    if sf_key not in st.session_state:
-        with st.spinner("載入資料夾…"):
-            st.session_state[sf_key] = google_drive.list_drive_folders(
-                oauth_client, parent_id=import_parent_id, creds_dict=_creds
+    tab_hold, tab_txn = st.tabs(["📊 股票持倉", "🧾 交易紀錄"])
+
+    # ── Tab 1: 股票持倉 ──────────────────────────────────────────
+    with tab_hold:
+        st.caption("讀取 Excel 的「個股持倉」工作表，更新持倉與現金資料。")
+        excel_files_hold = _render_drive_picker(oauth_client, _creds, "gd_hold")
+
+        if not excel_files_hold:
+            st.info("此資料夾沒有 Excel 檔案（.xlsx / .xls），請進入其他子資料夾")
+        else:
+            file_opts_hold = [f["name"] for f in excel_files_hold]
+            sel_h = st.selectbox(
+                "選擇 Excel 檔案", range(len(file_opts_hold)),
+                format_func=lambda i: file_opts_hold[i],
+                key="gd_hold_file_select",
             )
-    if xl_key not in st.session_state:
-        with st.spinner("載入 Excel 檔案…"):
-            st.session_state[xl_key] = google_drive.list_drive_files(
-                oauth_client, folder_id=import_parent_id, extensions=[".xlsx", ".xls"],
-                creds_dict=_creds
+            sel_file_hold = excel_files_hold[sel_h]
+            st.caption(f"修改日期：{sel_file_hold.get('modifiedTime', '')[:10]}")
+
+            st.warning("⚠️ 警告：系統將清除先前持倉/現金資料，以此檔完全覆寫！")
+            confirm_hold = st.checkbox("我已了解，將覆寫持倉與現金資料", key="gd_hold_confirm")
+
+            col_prev_h, col_imp_h = st.columns(2)
+            with col_prev_h:
+                if st.button("👁️ 預覽工作表", use_container_width=True, key="gd_hold_preview"):
+                    try:
+                        with st.spinner(f"下載 {sel_file_hold['name']}…"):
+                            fb = google_drive.download_drive_file(
+                                oauth_client, sel_file_hold["id"], creds_dict=_creds
+                            )
+                        import io as _io
+                        xl = pd.ExcelFile(_io.BytesIO(fb))
+                        st.success(f"工作表：{', '.join(xl.sheet_names)}")
+                        sheet = "個股持倉" if "個股持倉" in xl.sheet_names else xl.sheet_names[0]
+                        df_prev = xl.parse(sheet, header=None, nrows=10)
+                        st.dataframe(df_prev, use_container_width=True, hide_index=True)
+                    except Exception as e:
+                        st.error(f"❌ 預覽失敗: {e}")
+
+            with col_imp_h:
+                if st.button("📥 匯入持倉", use_container_width=True,
+                             key="gd_hold_run", type="primary", disabled=not confirm_hold):
+                    try:
+                        with st.spinner(f"匯入 {sel_file_hold['name']}…"):
+                            fb = google_drive.download_drive_file(
+                                oauth_client, sel_file_hold["id"], creds_dict=_creds
+                            )
+                            import import_excel as _ie
+                            cfg = config.load_config()
+                            result = _ie.import_holdings_from_bytes(fb, cfg)
+                        st.success(f"✅ 持倉匯入完成！持倉 {result['holdings']} 檔、現金 {result['cash']} 筆")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 匯入失敗: {e}")
+
+    # ── Tab 2: 交易紀錄 ──────────────────────────────────────────
+    with tab_txn:
+        st.caption("讀取 Excel 的「交易紀錄」工作表，更新交易歷史（不影響持倉）。")
+        excel_files_txn = _render_drive_picker(oauth_client, _creds, "gd_txn")
+
+        if not excel_files_txn:
+            st.info("此資料夾沒有 Excel 檔案（.xlsx / .xls），請進入其他子資料夾")
+        else:
+            file_opts_txn = [f["name"] for f in excel_files_txn]
+            sel_t = st.selectbox(
+                "選擇 Excel 檔案", range(len(file_opts_txn)),
+                format_func=lambda i: file_opts_txn[i],
+                key="gd_txn_file_select",
             )
-    subfolders = st.session_state.get(sf_key) or []
-    excel_files = st.session_state.get(xl_key) or []
+            sel_file_txn = excel_files_txn[sel_t]
+            st.caption(f"修改日期：{sel_file_txn.get('modifiedTime', '')[:10]}")
 
-    # 資料夾導航列
-    col_fsel, col_finto, col_fup, col_fref = st.columns([5, 1, 1, 1])
-    with col_fsel:
-        folder_options = ["📁 此資料夾"] + [("📂 " + f["name"]) for f in subfolders]
-        folder_nav_idx = st.selectbox(
-            "子資料夾",
-            range(len(folder_options)),
-            format_func=lambda i: folder_options[i],
-            key="gd_import_folder_nav",
-            label_visibility="collapsed",
-        )
-    with col_finto:
-        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        if folder_nav_idx > 0:
-            if st.button("📂 進入", key="gd_import_into"):
-                sel = subfolders[folder_nav_idx - 1]
-                st.session_state.gd_import_folder_stack.append(
-                    {"id": sel["id"], "name": sel["name"]}
-                )
-                st.rerun()
-    with col_fup:
-        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        if st.session_state.gd_import_folder_stack:
-            if st.button("⬆️ 返回", key="gd_import_up"):
-                st.session_state.gd_import_folder_stack.pop()
-                st.rerun()
-    with col_fref:
-        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        if st.button("🔄", key="gd_import_refresh", help="重新整理"):
-            for k in list(st.session_state.keys()):
-                if k.startswith("gd_import_sf_") or k.startswith("gd_import_xl_"):
-                    del st.session_state[k]
-            st.rerun()
+            st.warning("⚠️ 警告：系統將清除先前所有交易紀錄，以此檔完全覆寫！")
+            confirm_txn = st.checkbox("我已了解，將覆寫所有交易紀錄", key="gd_txn_confirm")
 
-    # Excel 檔案選擇
-    if not excel_files:
-        st.info("此資料夾沒有 Excel 檔案（.xlsx / .xls），請進入其他子資料夾")
-    else:
-        file_options = [f["name"] for f in excel_files]
-        sel_idx = st.selectbox(
-            "選擇 Excel 檔案",
-            range(len(file_options)),
-            format_func=lambda i: file_options[i],
-            key="gd_import_file_select",
-        )
-        selected_file = excel_files[sel_idx]
-        mod_time = selected_file.get("modifiedTime", "")[:10]
-        st.caption(f"修改日期：{mod_time}")
+            col_prev_t, col_imp_t = st.columns(2)
+            with col_prev_t:
+                if st.button("👁️ 預覽工作表", use_container_width=True, key="gd_txn_preview"):
+                    try:
+                        with st.spinner(f"下載 {sel_file_txn['name']}…"):
+                            fb = google_drive.download_drive_file(
+                                oauth_client, sel_file_txn["id"], creds_dict=_creds
+                            )
+                        import io as _io
+                        xl = pd.ExcelFile(_io.BytesIO(fb))
+                        st.success(f"工作表：{', '.join(xl.sheet_names)}")
+                        sheet = "交易紀錄" if "交易紀錄" in xl.sheet_names else xl.sheet_names[0]
+                        df_prev = xl.parse(sheet, nrows=10)
+                        st.dataframe(df_prev, use_container_width=True, hide_index=True)
+                    except Exception as e:
+                        st.error(f"❌ 預覽失敗: {e}")
 
-        st.warning("⚠️ 警告：系統將清除先前資料，並以新匯入的檔案完全覆寫！")
-        confirm = st.checkbox("我已了解系統將清除先前資料", key="gd_import_confirm")
+            with col_imp_t:
+                if st.button("📥 匯入交易紀錄", use_container_width=True,
+                             key="gd_txn_run", type="primary", disabled=not confirm_txn):
+                    try:
+                        with st.spinner(f"匯入 {sel_file_txn['name']}…"):
+                            fb = google_drive.download_drive_file(
+                                oauth_client, sel_file_txn["id"], creds_dict=_creds
+                            )
+                            import import_excel as _ie
+                            cfg = config.load_config()
+                            result = _ie.import_transactions_from_bytes(fb, cfg)
+                        st.success(f"✅ 交易紀錄匯入完成！共 {result['transactions']} 筆")
 
-        col_prev, col_imp = st.columns(2)
-        with col_prev:
-            if st.button("👁️ 預覽工作表", use_container_width=True, key="gd_import_preview"):
-                try:
-                    with st.spinner(f"下載 {selected_file['name']}…"):
-                        file_bytes = google_drive.download_drive_file(
-                            oauth_client, selected_file["id"],
-                            creds_dict=st.session_state.get("google_creds")
-                        )
-                    import io as _io
-                    xl = pd.ExcelFile(_io.BytesIO(file_bytes))
-                    st.success(f"工作表：{', '.join(xl.sheet_names)}")
-                    df_prev = xl.parse(xl.sheet_names[0], header=None, nrows=10)
-                    st.dataframe(df_prev, use_container_width=True, hide_index=True)
-                except Exception as e:
-                    st.error(f"❌ 預覽失敗: {e}")
-
-        with col_imp:
-            if st.button("📥 匯入此檔案", use_container_width=True,
-                         key="gd_import_run", type="primary", disabled=not confirm):
-                try:
-                    with st.spinner(f"匯入 {selected_file['name']}…"):
-                        file_bytes = google_drive.download_drive_file(
-                            oauth_client, selected_file["id"],
-                            creds_dict=st.session_state.get("google_creds")
-                        )
-                        import import_excel as _ie
-                        cfg = config.load_config()
-                        result = _ie.import_all_from_bytes(file_bytes, cfg)
-                    st.success(
-                        f"✅ 匯入完成！"
-                        f"持倉 {result['holdings']} 檔、"
-                        f"現金 {result['cash']} 筆、"
-                        f"交易 {result['transactions']} 筆"
-                    )
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ 匯入失敗: {e}")
+                        # 預覽匯入結果
+                        if result["records"]:
+                            df_txn = pd.DataFrame([{
+                                "日期": t["date"],
+                                "代碼": t["symbol"],
+                                "名稱": t["name"],
+                                "操作": "🟢 買入" if t["action"] == "BUY" else "🔴 賣出",
+                                "股數": t["shares"],
+                                "價格": t["price"],
+                                "幣別": t["currency"],
+                            } for t in result["records"]])
+                            df_txn = df_txn.sort_values("日期", ascending=False)
+                            st.dataframe(df_txn, use_container_width=True, hide_index=True)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 匯入失敗: {e}")
 
     # 備份到 Google 雲端硬碟
     st.markdown("---")
