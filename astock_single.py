@@ -59,7 +59,7 @@ def main():
             st.warning("請先登入 Google 帳號以查看持有資產。")
             return
         portfolio = data.calculate_portfolio_value(cfg)
-        ui.render_asset_cards(portfolio)
+        ui.render_asset_cards(portfolio, cfg)
         ui.render_stock_chart(cfg)
 
     elif page == "📝 資產明細":

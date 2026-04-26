@@ -667,7 +667,7 @@ def render_net_value(portfolio):
 
 
 
-def render_asset_cards(portfolio):
+def render_asset_cards(portfolio, cfg=None):
     """渲染資產方塊卡片（支援圖示化/條列式切換 + 台美股/複委託篩選）"""
     # 標題列 + 篩選 + 切換按鈕
     title_col, filter_col, toggle_col = st.columns([3, 1.5, 1])
@@ -713,16 +713,65 @@ def render_asset_cards(portfolio):
     st.caption(f"共 {total_count} 檔持倉")
 
     if view_mode == "📋 條列":
-        _render_assets_list_view(stocks, cash_holdings)
+        _render_assets_list_view(stocks, cash_holdings, cfg)
     else:
-        _render_assets_card_view(stocks, cash_holdings)
+        _render_assets_card_view(stocks, cash_holdings, cfg)
 
 
-def _render_assets_card_view(stocks, cash_holdings):
+def _render_stock_txn_detail(symbol, cfg):
+    """展開顯示指定股票的交易明細"""
+    if cfg is None:
+        st.info("無法載入交易資料。")
+        return
+    transactions = cfg.get("transactions", [])
+    stock_txns = sorted(
+        [t for t in transactions if t["symbol"] == symbol],
+        key=lambda t: t["date"],
+    )
+    if not stock_txns:
+        st.info(f"沒有 {symbol} 的交易紀錄。")
+        return
+
+    buy_shares  = sum(t["shares"] for t in stock_txns if t["action"] == "BUY")
+    sell_shares = sum(t["shares"] for t in stock_txns if t["action"] == "SELL")
+    held_shares = buy_shares - sell_shares
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("買入總股數", f"{buy_shares:,}")
+    c2.metric("賣出總股數", f"{sell_shares:,}")
+    c3.metric("目前持有", f"{held_shares:,}")
+
+    df = pd.DataFrame([{
+        "日期":   t["date"],
+        "操作":   "🟢 買入" if t["action"] == "BUY" else "🔴 賣出",
+        "股數":   t["shares"],
+        "單價":   t["price"],
+        "總金額": round(t["price"] * t["shares"], 2),
+        "手續費": t.get("fee", 0) or 0,
+        "稅金":   t.get("tax", 0) or 0,
+        "幣別":   t["currency"],
+    } for t in stock_txns])
+    st.dataframe(
+        df, use_container_width=True, hide_index=True,
+        column_config={
+            "單價":   st.column_config.NumberColumn(format="%,.4f"),
+            "總金額": st.column_config.NumberColumn(format="%,.2f"),
+            "手續費": st.column_config.NumberColumn(format="%,.2f"),
+            "稅金":   st.column_config.NumberColumn(format="%,.2f"),
+        },
+    )
+
+
+def _render_assets_card_view(stocks, cash_holdings, cfg=None):
     """圖示化模式：卡片方格"""
+    _SEL = "asset_txn_selected"
+    if _SEL not in st.session_state:
+        st.session_state[_SEL] = None
+
     if stocks:
         cols = st.columns(3)
         for i, stock in enumerate(stocks):
+            sym = stock["symbol"]
             with cols[i % 3]:
                 pl = stock["profit_loss"]
                 pl_pct = stock["profit_loss_pct"]
@@ -735,7 +784,7 @@ def _render_assets_card_view(stocks, cash_holdings):
                 <div class="asset-card">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <div>
-                            <span class="asset-symbol">{mkt} {stock['symbol']}</span>
+                            <span class="asset-symbol">{mkt} {sym}</span>
                             <div class="asset-name">{stock['name']}</div>
                         </div>
                         <div style="text-align:right;">
@@ -752,6 +801,18 @@ def _render_assets_card_view(stocks, cash_holdings):
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
+                is_sel = st.session_state[_SEL] == sym
+                label = "▲ 收起" if is_sel else "📋 交易明細"
+                if st.button(label, key=f"card_txn_{sym}", use_container_width=True):
+                    st.session_state[_SEL] = None if is_sel else sym
+                    st.rerun()
+
+    # 交易明細展開區
+    selected = st.session_state.get(_SEL)
+    if selected and cfg is not None:
+        st.markdown(f"#### 📋 {selected} 交易明細")
+        _render_stock_txn_detail(selected, cfg)
 
     # 現金卡片
     if cash_holdings:
@@ -772,15 +833,13 @@ def _render_assets_card_view(stocks, cash_holdings):
                 """, unsafe_allow_html=True)
 
 
-def _render_assets_list_view(stocks, cash_holdings):
+def _render_assets_list_view(stocks, cash_holdings, cfg=None):
     """條列式模式：表格清單"""
     if stocks:
-        # 建立帶有顏色標記的資料
         rows = []
         for s in stocks:
             pl = s["profit_loss"]
             pl_pct = s["profit_loss_pct"]
-            cur = "NT$" if s["currency"] == "TWD" else "US$"
             rows.append({
                 "市場": "🇹🇼" if s["market"] == "TW" else "🇺🇸",
                 "分類": s.get("category", ""),
@@ -796,8 +855,6 @@ def _render_assets_list_view(stocks, cash_holdings):
             })
 
         df = pd.DataFrame(rows)
-
-        # 用 Streamlit 原生 column_config 做彩色顯示
         st.dataframe(
             df,
             use_container_width=True,
@@ -810,6 +867,15 @@ def _render_assets_list_view(stocks, cash_holdings):
                 "報酬率%": st.column_config.NumberColumn("報酬率%", format="%.2f%%"),
             },
         )
+
+        # 股票選擇器 → 展開交易明細
+        if cfg is not None:
+            symbols = [s["symbol"] for s in stocks]
+            options = ["— 選擇股票查看交易明細 —"] + symbols
+            sel = st.selectbox("查看交易明細", options, key="list_txn_select", label_visibility="collapsed")
+            if sel != options[0]:
+                st.markdown(f"#### 📋 {sel} 交易明細")
+                _render_stock_txn_detail(sel, cfg)
 
     # 現金條列
     if cash_holdings:
