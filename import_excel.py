@@ -65,13 +65,16 @@ def _parse_holdings_sheet(excel_path):
         symbol_raw = str(row[1]).strip() if pd.notna(row[1]) else ""
         if not symbol_raw:
             continue
+        shares = int(_safe_float(row[4]))
+        if shares == 0:  # 跳過標題列或持股為 0 的行
+            continue
         category = str(row[0]).strip() if pd.notna(row[0]) else ""
         symbol_yf = symbol_raw + ".TW" if not symbol_raw.endswith((".TW", ".TWO")) else symbol_raw
         holdings.append({
             "symbol": symbol_yf,
             "name": category,
             "market": "TW",
-            "shares": int(_safe_float(row[4])),
+            "shares": shares,
             "avg_cost": round(_safe_float(row[3]), 4),
             "currency": "TWD",
             "category": category,
@@ -85,12 +88,15 @@ def _parse_holdings_sheet(excel_path):
         symbol_raw = str(row[1]).strip() if pd.notna(row[1]) else ""
         if not symbol_raw or symbol_raw == "NaN":
             continue
+        shares = round(_safe_float(row[4]), 5)
+        if shares == 0:
+            continue
         category = str(row[0]).strip() if pd.notna(row[0]) else ""
         holdings.append({
             "symbol": symbol_raw,
             "name": symbol_raw,
             "market": "US",
-            "shares": round(_safe_float(row[4]), 5),
+            "shares": shares,
             "avg_cost": round(_safe_float(row[3]), 4),
             "currency": "USD",
             "category": category,
@@ -106,12 +112,15 @@ def _parse_holdings_sheet(excel_path):
         symbol_raw = str(row[1]).strip() if pd.notna(row[1]) else ""
         if not symbol_raw or symbol_raw == "NaN":
             continue
+        shares = round(_safe_float(row[4]), 5)
+        if shares == 0:
+            continue
         category = str(row[0]).strip() if pd.notna(row[0]) else ""
         holdings.append({
             "symbol": symbol_raw,
             "name": symbol_raw,
             "market": "US",
-            "shares": round(_safe_float(row[4]), 5),
+            "shares": shares,
             "avg_cost": round(_safe_float(row[3]), 4),
             "currency": "USD",
             "category": category,
