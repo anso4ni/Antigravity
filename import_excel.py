@@ -176,6 +176,8 @@ def _parse_transactions_sheet(excel_path):
     df = pd.read_excel(excel_path, sheet_name="交易紀錄")
     transactions = []
     for _, row in df.iterrows():
+        if pd.isna(row.get("買賣日期")):
+            continue
         market_raw = str(row["台/美股"]).strip()
         if market_raw in ["複委託", "FT"]:
             market, currency = "US", "USD"
@@ -183,6 +185,8 @@ def _parse_transactions_sheet(excel_path):
             market, currency = "TW", "TWD"
         action = "BUY" if row["買賣"] == "買" else "SELL"
         symbol = str(row["代號"]).strip()
+        if not symbol or symbol == "nan":
+            continue
         if market == "TW" and not symbol.endswith((".TW", ".TWO")):
             symbol_yf = symbol + ".TW"
         else:
