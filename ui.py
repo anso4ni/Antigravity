@@ -668,9 +668,8 @@ def render_net_value(portfolio):
 
 
 def render_asset_cards(portfolio, cfg=None):
-    """渲染資產方塊卡片（支援圖示化/條列式切換 + 台美股/複委託篩選）"""
-    # 標題列 + 篩選 + 切換按鈕
-    title_col, filter_col, toggle_col = st.columns([3, 1.5, 1])
+    """渲染持有資產條列式清單（點擊各列展開交易明細）"""
+    title_col, filter_col = st.columns([3, 2])
     with title_col:
         st.markdown('<div class="section-title">📦 持有資產</div>', unsafe_allow_html=True)
     with filter_col:
@@ -681,19 +680,10 @@ def render_asset_cards(portfolio, cfg=None):
             key="asset_market_filter",
             label_visibility="collapsed",
         )
-    with toggle_col:
-        view_mode = st.segmented_control(
-            "顯示方式",
-            options=["🗂️ 圖示", "📋 條列"],
-            default="🗂️ 圖示",
-            key="asset_view_mode",
-            label_visibility="collapsed",
-        )
 
     stocks = portfolio.get("stock_details", [])
     cash_holdings = portfolio.get("cash_holdings", [])
 
-    # 根據市場/來源篩選
     if market_filter == "🇹🇼 台股":
         stocks = [s for s in stocks if s.get("source") == "台股"]
         cash_holdings = [c for c in cash_holdings if c.get("source") == "台股"]
@@ -708,14 +698,8 @@ def render_asset_cards(portfolio, cfg=None):
         st.info("🔍 該市場目前沒有持倉。")
         return
 
-    # 顯示篩選後的統計
-    total_count = len(stocks)
-    st.caption(f"共 {total_count} 檔持倉")
-
-    if view_mode == "📋 條列":
-        _render_assets_list_view(stocks, cash_holdings, cfg)
-    else:
-        _render_assets_card_view(stocks, cash_holdings, cfg)
+    st.caption(f"共 {len(stocks)} 檔持倉，點擊各列展開交易明細")
+    _render_assets_list_view(stocks, cash_holdings, cfg)
 
 
 def _render_stock_txn_detail(symbol, cfg):
@@ -762,139 +746,60 @@ def _render_stock_txn_detail(symbol, cfg):
     )
 
 
-def _render_assets_card_view(stocks, cash_holdings, cfg=None):
-    """圖示化模式：卡片方格（點擊卡片展開交易明細）"""
+
+def _render_assets_list_view(stocks, cash_holdings, cfg=None):
+    """條列式：每檔股票為一個可展開列，點擊後顯示交易明細"""
     st.markdown("""
     <style>
     [data-testid="stExpander"] {
-        background: linear-gradient(145deg, #1e1e3a, #252547) !important;
-        border: 1px solid rgba(255,255,255,0.06) !important;
-        border-radius: 16px !important;
-        box-shadow: 0 4px 24px rgba(0,0,0,0.2) !important;
-        margin-bottom: 8px !important;
-        overflow: hidden !important;
+        background: #1a1a2e !important;
+        border: 1px solid rgba(255,255,255,0.07) !important;
+        border-radius: 10px !important;
+        margin-bottom: 4px !important;
     }
-    [data-testid="stExpander"] summary,
-    [data-testid="stExpander"] > div > div > summary {
-        padding: 14px 18px !important;
+    [data-testid="stExpander"] summary {
+        padding: 10px 16px !important;
         cursor: pointer !important;
+        font-size: 0.88rem !important;
     }
     [data-testid="stExpander"] summary:hover {
         background: rgba(255,255,255,0.03) !important;
-    }
-    [data-testid="stExpander"] .st-emotion-cache-p5msec {
-        padding: 0 18px 14px 18px !important;
+        border-radius: 10px !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
     if stocks:
-        cols = st.columns(3)
-        for i, stock in enumerate(stocks):
-            sym = stock["symbol"]
-            with cols[i % 3]:
-                pl = stock["profit_loss"]
-                pl_pct = stock["profit_loss_pct"]
-                pl_sign = "+" if pl >= 0 else ""
-                cur = "NT$" if stock["currency"] == "TWD" else "US$"
-                mkt = "🇹🇼" if stock["market"] == "TW" else "🇺🇸"
-                pl_arrow = "▲" if pl >= 0 else "▼"
-
-                label = (
-                    f"{mkt} **{sym}** {stock['name']}  |  "
-                    f"{cur}{stock['current_price']:,.2f}  "
-                    f"{pl_arrow} {pl_sign}{pl_pct:.2f}%"
-                )
-                with st.expander(label, expanded=False):
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("持有股數", f"{stock['shares']:,}")
-                    c2.metric("成本", f"{cur}{stock['avg_cost']:,.2f}")
-                    c3.metric("市值", f"{cur}{stock['market_value']:,.0f}")
-                    if cfg:
-                        st.markdown("---")
-                        _render_stock_txn_detail(sym, cfg)
-
-    # 現金卡片
-    if cash_holdings:
-        cash_cols = st.columns(min(len(cash_holdings), 3))
-        for i, cash in enumerate(cash_holdings):
-            with cash_cols[i % 3]:
-                cur_sym = "NT$" if cash["currency"] == "TWD" else "US$"
-                src_icon = "🏦" if cash.get("source") == "複委託" else ("🇺🇸" if cash.get("source") == "FT" else "🏧")
-                st.markdown(f"""
-                <div class="asset-card">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <div>
-                            <span class="asset-symbol">{src_icon} {cash.get('note', '現金')}</span>
-                        </div>
-                        <div class="asset-value">{cur_sym} {cash['amount']:,.2f}</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-
-def _render_assets_list_view(stocks, cash_holdings, cfg=None):
-    """條列式模式：表格清單"""
-    if stocks:
-        rows = []
         for s in stocks:
             pl = s["profit_loss"]
             pl_pct = s["profit_loss_pct"]
-            rows.append({
-                "市場": "🇹🇼" if s["market"] == "TW" else "🇺🇸",
-                "分類": s.get("category", ""),
-                "代碼": s["symbol"],
-                "名稱": s["name"],
-                "現價": s["current_price"],
-                "持股數": s["shares"],
-                "均價": round(s["avg_cost"], 2),
-                "市值": round(s["market_value"], 0),
-                "損益": round(pl, 0),
-                "報酬率%": pl_pct,
-                "來源": s.get("source", ""),
-            })
+            pl_sign = "+" if pl >= 0 else ""
+            cur = "NT$" if s["currency"] == "TWD" else "US$"
+            mkt = "🇹🇼" if s["market"] == "TW" else "🇺🇸"
+            pl_col = "green" if pl >= 0 else "red"
 
-        df = pd.DataFrame(rows)
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "現價": st.column_config.NumberColumn("現價", format="%.2f"),
-                "均價": st.column_config.NumberColumn("均價", format="%.2f"),
-                "市值": st.column_config.NumberColumn("市值", format="%,.0f"),
-                "損益": st.column_config.NumberColumn("損益", format="%,.0f"),
-                "報酬率%": st.column_config.NumberColumn("報酬率%", format="%.2f%%"),
-            },
-        )
-
-        # 股票選擇器 → 展開交易明細
-        if cfg is not None:
-            symbols = [s["symbol"] for s in stocks]
-            options = ["— 選擇股票查看交易明細 —"] + symbols
-            sel = st.selectbox("查看交易明細", options, key="list_txn_select", label_visibility="collapsed")
-            if sel != options[0]:
-                st.markdown(f"#### 📋 {sel} 交易明細")
-                _render_stock_txn_detail(sel, cfg)
+            row_label = (
+                f"{mkt} **{s['symbol']}** {s['name']}  ·  "
+                f"持 {s['shares']:,} 股  ·  "
+                f"現 {cur}{s['current_price']:,.2f}  ·  "
+                f"市值 {cur}{s['market_value']:,.0f}  ·  "
+                f":{pl_col}[{pl_sign}{pl:,.0f} ({pl_sign}{pl_pct:.2f}%)]"
+            )
+            with st.expander(row_label, expanded=False):
+                if cfg:
+                    _render_stock_txn_detail(s["symbol"], cfg)
+                else:
+                    st.info("無交易資料。")
 
     # 現金條列
     if cash_holdings:
-        cash_rows = []
-        for cash in cash_holdings:
-            cash_rows.append({
-                "類型": "💵 現金",
-                "幣別": cash["currency"],
-                "備註": cash.get("note", ""),
-                "金額": cash["amount"],
-            })
-        cash_df = pd.DataFrame(cash_rows)
+        st.markdown("##### 💵 現金")
+        cash_rows = [{"來源": c.get("source", ""), "備註": c.get("note", ""), "幣別": c["currency"], "金額": c["amount"]} for c in cash_holdings]
         st.dataframe(
-            cash_df,
+            pd.DataFrame(cash_rows),
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "金額": st.column_config.NumberColumn("金額", format="%,.2f"),
-            },
+            column_config={"金額": st.column_config.NumberColumn("金額", format="%,.2f")},
         )
 
 
