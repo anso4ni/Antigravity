@@ -671,31 +671,31 @@ def render_net_value(portfolio):
     cat_cards_data = []
     for src, icon, anchor in cat_order:
         cd = cat_data.get(src, {"market_value": 0, "cost": 0, "count": 0, "day_change": 0, "market_value_twd": 0})
-        cash_amt = cash_by_source.get(src, 0)
-        total_cat = cd["market_value"] + cash_amt
 
-        # pct = stocks only (cash card accounts for cash separately → sum = 100%)
+        # 分類卡片只顯示股票市值（現金已由獨立現金卡片顯示，避免重複計算）
+        mv = cd["market_value"]
+
         if disp_mode == "Default":
             pct = (cd.get("market_value_twd", 0) / total_for_pct * 100)
         else:
-            pct = (cd["market_value"] / total_for_pct * 100)
+            pct = (mv / total_for_pct * 100)
 
-        pl = cd["market_value"] - cd["cost"] if cd["cost"] > 0 else 0
+        pl = mv - cd["cost"] if cd["cost"] > 0 else 0
         pl_pct = (pl / cd["cost"] * 100) if cd["cost"] > 0 else 0
 
-        pl_color = "#ff1744" if pl >= 0 else "#00e676"
+        pl_color = "#00e676" if pl >= 0 else "#ff1744"
         pl_sign = "+" if pl >= 0 else ""
 
         dc = cd.get("day_change", 0)
-        prev_mv = cd["market_value"] - dc
+        prev_mv = mv - dc
         dc_pct = (dc / prev_mv * 100) if prev_mv > 0 else 0
-        dc_color = "#ff1744" if dc >= 0 else "#00e676"
+        dc_color = "#00e676" if dc >= 0 else "#ff1744"
         dc_sign = "+" if dc >= 0 else ""
 
         cat_cards_data.append({
-            "icon": icon, "src": src, "anchor": anchor, "total": total_cat, "pct": pct,
+            "icon": icon, "src": src, "anchor": anchor, "total": mv, "pct": pct,
             "sym": _src_sym(src),
-            "count": cd["count"], "mv": cd["market_value"],
+            "count": cd["count"], "mv": mv,
             "pl": pl, "pl_pct": pl_pct, "pl_color": pl_color, "pl_sign": pl_sign,
             "dc": dc, "dc_pct": dc_pct, "dc_color": dc_color, "dc_sign": dc_sign,
         })
