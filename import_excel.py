@@ -55,80 +55,69 @@ def import_all():
 
 
 def _parse_holdings_sheet(excel_path):
-    """解析 '個股持倉' — 持倉資料，FT 與複委託分開"""
+    """
+    解析 '個股持倉' — 以關鍵字 '台股'/'美股'/'複委託' 偵測 section，
+    不依賴硬編碼行號，支援任意股票數量。
+    """
     df = pd.read_excel(excel_path, sheet_name="個股持倉", header=None)
     holdings = []
+    current_section = None  # "TW" | "FT" | "複委託"
 
-    # --- 台股 (rows 3~18) ---
-    for idx in range(3, 18):
+    for idx in range(len(df)):
         row = df.iloc[idx]
-        symbol_raw = str(row[1]).strip() if pd.notna(row[1]) else ""
-        if not symbol_raw:
-            continue
-        shares = int(_safe_float(row[4]))
-        if shares == 0:  # 跳過標題列或持股為 0 的行
-            continue
-        category = str(row[0]).strip() if pd.notna(row[0]) else ""
-        symbol_yf = symbol_raw + ".TW" if not symbol_raw.endswith((".TW", ".TWO")) else symbol_raw
-        holdings.append({
-            "symbol": symbol_yf,
-            "name": category,
-            "market": "TW",
-            "shares": shares,
-            "avg_cost": round(_safe_float(row[3]), 4),
-            "currency": "TWD",
-            "category": category,
-            "source": "台股",
-            "note": "",
-        })
+        col1 = str(row[1]).strip() if pd.notna(row[1]) else ""
 
-    # --- 美股 FT (rows 20~39) ---
-    for idx in range(20, 40):
-        if idx >= len(df):
-            break
-        row = df.iloc[idx]
-        symbol_raw = str(row[1]).strip() if pd.notna(row[1]) else ""
-        if not symbol_raw or symbol_raw == "NaN":
+        # ── Section 偵測 ──────────────────────────────────────────
+        if col1 == "台股":
+            current_section = "TW"
             continue
-        shares = round(_safe_float(row[4]), 5)
+        if col1 == "美股":
+            current_section = "FT"
+            continue
+        if col1 == "複委託":
+            current_section = "複委託"
+            continue
+
+        if not current_section or not col1:
+            continue
+
+        # ── 過濾標題列（shares 欄位非數字或為 0 ） ────────────────
+        shares_val = _safe_float(row[4]) if pd.notna(row[4]) else 0.0
+        if current_section == "TW":
+            shares = int(shares_val)
+        else:
+            shares = round(shares_val, 5)
         if shares == 0:
             continue
-        category = str(row[0]).strip() if pd.notna(row[0]) else ""
-        holdings.append({
-            "symbol": symbol_raw,
-            "name": symbol_raw,
-            "market": "US",
-            "shares": shares,
-            "avg_cost": round(_safe_float(row[3]), 4),
-            "currency": "USD",
-            "category": category,
-            "source": "FT",
-            "note": "",
-        })
 
-    # --- 複委託 (rows 40~59) ---
-    for idx in range(40, 60):
-        if idx >= len(df):
-            break
-        row = df.iloc[idx]
-        symbol_raw = str(row[1]).strip() if pd.notna(row[1]) else ""
-        if not symbol_raw or symbol_raw == "NaN":
-            continue
-        shares = round(_safe_float(row[4]), 5)
-        if shares == 0:
-            continue
         category = str(row[0]).strip() if pd.notna(row[0]) else ""
-        holdings.append({
-            "symbol": symbol_raw,
-            "name": symbol_raw,
-            "market": "US",
-            "shares": shares,
-            "avg_cost": round(_safe_float(row[3]), 4),
-            "currency": "USD",
-            "category": category,
-            "source": "複委託",
-            "note": "",
-        })
+
+        if current_section == "TW":
+            symbol_yf = col1 + ".TW" if not col1.endswith((".TW", ".TWO")) else col1
+            holdings.append({
+                "symbol": symbol_yf,
+                "name": category,
+                "market": "TW",
+                "shares": shares,
+                "avg_cost": round(_safe_float(row[3]), 4),
+                "currency": "TWD",
+                "category": category,
+                "source": "台股",
+                "note": "",
+            })
+        else:
+            source = "FT" if current_section == "FT" else "複委託"
+            holdings.append({
+                "symbol": col1,
+                "name": col1,
+                "market": "US",
+                "shares": shares,
+                "avg_cost": round(_safe_float(row[3]), 4),
+                "currency": "USD",
+                "category": category,
+                "source": source,
+                "note": "",
+            })
 
     return holdings
 

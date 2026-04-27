@@ -56,21 +56,26 @@ git push origin main
 
 ## Excel 匯入格式（個股持倉 sheet）
 
-行號為 0-based（pandas index）：
+**不使用硬編碼行號**，改以關鍵字動態偵測 section：
+- `col[1] == "台股"` → 進入台股 section（source="台股"）
+- `col[1] == "美股"` → 進入 FT section（source="FT"）
+- `col[1] == "複委託"` → 進入複委託 section（source="複委託"）
+- 每行 `col[4]`（持有股數）== 0 或非數字 → 跳過（標題列、合計列）
+- 各 section 股票數量不限制
 
-| Section | 資料起始行 | 程式碼範圍 |
-|---------|-----------|-----------|
-| 台股 | row 3 | `range(3, 18)` |
-| 美股 FT | row 20 | `range(20, 40)` |
-| 複委託 | row 40 | `range(40, 60)` |
-
-各 section 讀取欄位：`col[1]`=股票代碼、`col[3]`=成本、`col[4]`=持有股數
+讀取欄位：`col[1]`=股票代碼、`col[3]`=成本、`col[4]`=持有股數
 
 ---
 
 ## 已知重要行為
 
-- 登入後 `st.rerun()` 必須被呼叫，否則 `cfg` 仍指向匿名配置
+### 登入 / 登出
+- 頁面重整後應保持登入狀態，直到使用者點擊「登出」
 - 本地 OAuth token 存於 `google_token.json`；登入 email 快取於 `google_user_cache.json`
-- 登出時同時刪除兩個檔案
+- auto-login 快速路徑：從 `google_user_cache.json` 讀 email（不呼叫 Google API）
+- auto-login 備援路徑：快取不存在時呼叫 `authenticate_oauth()`（會建立快取）
+- 登出時同時刪除 `google_token.json` 與 `google_user_cache.json`
+- 登入後必須呼叫 `st.rerun()`，否則 `cfg` 仍指向匿名配置
+
+### 資料
 - 交易紀錄的 `source` 欄位為 `"FT"` / `"複委託"` / `"台股"`，用於各頁面的分類過濾

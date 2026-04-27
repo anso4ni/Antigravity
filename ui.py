@@ -288,17 +288,25 @@ def render_market_indices(cfg):
                 st.error(f"Google 授權失敗：{e}")
                 st.query_params.clear()
 
-    # ── 本地模式：有 token 檔案則自動靜默重新登入（不呼叫 Google API，從本地快取讀 email）──
+    # ── 本地模式：有 token 檔案則自動靜默重新登入 ────────────────────────────────
+    # 快速路徑：從本地快取讀 email（不呼叫 Google API）
+    # 備援路徑：快取不存在時（首次使用新版）走完整 OAuth 並建立快取
     if not _is_cloud_mode() and "google_client" not in st.session_state and google_drive.has_valid_token():
         try:
-            email = google_drive.load_user_cache()
             secrets_path = cfg.get("google_drive", {}).get("oauth_client_secrets_path", "")
-            if email and secrets_path:
-                creds = google_drive.get_oauth_credentials(secrets_path)
-                client = google_drive.make_gspread_client(creds)
-                st.session_state.google_client = client
-                st.session_state.google_email = email
-                st.rerun()
+            if secrets_path:
+                email = google_drive.load_user_cache()
+                if email:
+                    # 快速路徑：只需重建 gspread client，不呼叫 userinfo API
+                    creds = google_drive.get_oauth_credentials(secrets_path)
+                    client = google_drive.make_gspread_client(creds)
+                else:
+                    # 備援路徑：完整重新認證，同時建立快取供下次使用
+                    client, email = google_drive.authenticate_oauth(secrets_path)
+                if email:
+                    st.session_state.google_client = client
+                    st.session_state.google_email = email
+                    st.rerun()
         except Exception:
             pass
 
