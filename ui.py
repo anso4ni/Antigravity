@@ -1502,12 +1502,13 @@ _SORT_COLS = [
     ("投入金額", "invested"),
     ("現價",    "current_price"),
     ("日漲跌",  "change"),
+    ("日漲跌%", "change_pct"),
     ("市值",    "market_value"),
     ("損益",    "pl"),
     ("報酬率%", "pl_pct"),
     ("操作",    None),   # not sortable
 ]
-_COL_WIDTHS = [1.2, 1.2, 0.8, 1, 1.2, 1, 1, 1.2, 1.2, 1, 0.7]
+_COL_WIDTHS = [1.2, 1.2, 0.8, 1, 1.2, 1, 1, 0.9, 1.2, 1.2, 1, 0.7]
 
 
 def render_home_details(portfolio):
@@ -1632,6 +1633,7 @@ def render_home_details(portfolio):
                 "invested": round(disp_invested, 2),
                 "current_price": disp_price,
                 "change": disp_change,
+                "change_pct": s.get("change_pct", 0),
                 "market_value": round(disp_mv, 2),
                 "pl": round(disp_pl, 2),
                 "pl_pct": s_pl_pct,
@@ -1686,8 +1688,8 @@ def render_home_details(portfolio):
 
         # 資料列
         for row_idx, r in enumerate(rows):
-            data_cols = st.columns([1.2, 1.2, 0.8, 1, 1.2, 1, 1, 1.2, 1.2, 1, 0.7])
-            
+            data_cols = st.columns([1.2, 1.2, 0.8, 1, 1.2, 1, 1, 0.9, 1.2, 1.2, 1, 0.7])
+
             data_cols[0].markdown(f'<div style="font-size:0.85rem; padding:6px 0;">{r["symbol"]}</div>', unsafe_allow_html=True)
             data_cols[1].markdown(f'<div style="font-size:0.85rem; padding:6px 0;">{r["name"]}</div>', unsafe_allow_html=True)
             data_cols[2].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right;">{r["shares"]:,}</div>', unsafe_allow_html=True)
@@ -1695,12 +1697,13 @@ def render_home_details(portfolio):
             data_cols[4].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right;">{r["invested"]:,.2f}</div>', unsafe_allow_html=True)
             data_cols[5].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right; color:{r["price_color"]};">{r["current_price"]:,.2f}</div>', unsafe_allow_html=True)
             data_cols[6].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right; color:{r["price_color"]};">{r["change"]:,.2f}</div>', unsafe_allow_html=True)
-            data_cols[7].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right;">{r["market_value"]:,.2f}</div>', unsafe_allow_html=True)
-            data_cols[8].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right; color:{r["pl_color"]};">{r["pl"]:,.2f}</div>', unsafe_allow_html=True)
-            data_cols[9].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right; color:{r["pl_color"]};">{r["pl_pct"]:.2f}%</div>', unsafe_allow_html=True)
-            
+            data_cols[7].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right; color:{r["price_color"]};">{r["change_pct"]:+.2f}%</div>', unsafe_allow_html=True)
+            data_cols[8].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right;">{r["market_value"]:,.2f}</div>', unsafe_allow_html=True)
+            data_cols[9].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right; color:{r["pl_color"]};">{r["pl"]:,.2f}</div>', unsafe_allow_html=True)
+            data_cols[10].markdown(f'<div style="font-size:0.85rem; padding:6px 0; text-align:right; color:{r["pl_color"]};">{r["pl_pct"]:.2f}%</div>', unsafe_allow_html=True)
+
             # 操作按鈕（編輯 + 刪除）
-            with data_cols[10]:
+            with data_cols[11]:
                 btn_cols = st.columns(2)
                 edit_key = f"edit_{cat['source']}_{r['symbol']}_{row_idx}"
                 del_key = f"del_{cat['source']}_{r['symbol']}_{row_idx}"
