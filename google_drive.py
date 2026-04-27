@@ -93,6 +93,7 @@ OAUTH_SCOPES = [
 ]
 
 OAUTH_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "google_token.json")
+USER_CACHE_FILE  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "google_user_cache.json")
 
 
 def has_valid_token(token_path=None):
@@ -108,6 +109,32 @@ def has_valid_token(token_path=None):
         return creds.valid or bool(creds.expired and creds.refresh_token)
     except Exception:
         return False
+
+
+def save_user_cache(email, cache_path=None):
+    """將登入 email 快取到本地檔案，避免每次重整都要呼叫 Google API"""
+    import json as _json
+    if cache_path is None:
+        cache_path = USER_CACHE_FILE
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            _json.dump({"email": email}, f)
+    except Exception:
+        pass
+
+
+def load_user_cache(cache_path=None):
+    """讀取本地快取的登入 email，無需呼叫 Google API"""
+    import json as _json
+    if cache_path is None:
+        cache_path = USER_CACHE_FILE
+    if not os.path.exists(cache_path):
+        return ""
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            return _json.load(f).get("email", "")
+    except Exception:
+        return ""
 
 
 def get_oauth_credentials(client_secrets_path, token_path=None):
@@ -271,15 +298,20 @@ def authenticate_oauth(client_secrets_path, token_path=None):
     except Exception:
         pass
 
+    if email:
+        save_user_cache(email)
+
     return client, email
 
 
 def logout_oauth(token_path=None):
-    """刪除本地 OAuth token，完成登出"""
+    """刪除本地 OAuth token 與 email 快取，完成登出"""
     if token_path is None:
         token_path = OAUTH_TOKEN_FILE
     if os.path.exists(token_path):
         os.remove(token_path)
+    if os.path.exists(USER_CACHE_FILE):
+        os.remove(USER_CACHE_FILE)
 
 
 def authenticate_write(credentials_path):

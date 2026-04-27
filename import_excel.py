@@ -82,8 +82,10 @@ def _parse_holdings_sheet(excel_path):
             "note": "",
         })
 
-    # --- 美股 FT (rows 21~36) ---
-    for idx in range(21, 37):
+    # --- 美股 FT (rows 20~39) ---
+    for idx in range(20, 40):
+        if idx >= len(df):
+            break
         row = df.iloc[idx]
         symbol_raw = str(row[1]).strip() if pd.notna(row[1]) else ""
         if not symbol_raw or symbol_raw == "NaN":
@@ -104,8 +106,8 @@ def _parse_holdings_sheet(excel_path):
             "note": "",
         })
 
-    # --- 複委託 (rows 41~50) ---
-    for idx in range(41, 51):
+    # --- 複委託 (rows 40~59) ---
+    for idx in range(40, 60):
         if idx >= len(df):
             break
         row = df.iloc[idx]

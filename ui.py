@@ -288,14 +288,17 @@ def render_market_indices(cfg):
                 st.error(f"Google 授權失敗：{e}")
                 st.query_params.clear()
 
-    # ── 本地模式：有 token 檔案則自動靜默重新登入 ────────────────────────
+    # ── 本地模式：有 token 檔案則自動靜默重新登入（不呼叫 Google API，從本地快取讀 email）──
     if not _is_cloud_mode() and "google_client" not in st.session_state and google_drive.has_valid_token():
         try:
+            email = google_drive.load_user_cache()
             secrets_path = cfg.get("google_drive", {}).get("oauth_client_secrets_path", "")
-            if secrets_path:
-                client, email = google_drive.authenticate_oauth(secrets_path)
+            if email and secrets_path:
+                creds = google_drive.get_oauth_credentials(secrets_path)
+                client = google_drive.make_gspread_client(creds)
                 st.session_state.google_client = client
                 st.session_state.google_email = email
+                st.rerun()
         except Exception:
             pass
 
