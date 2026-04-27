@@ -71,10 +71,21 @@ git push origin main
 
 ### 登入 / 登出
 - 頁面重整後應保持登入狀態，直到使用者點擊「登出」
-- 本地 OAuth token 存於 `google_token.json`；登入 email 快取於 `google_user_cache.json`
-- auto-login 快速路徑：從 `google_user_cache.json` 讀 email（不呼叫 Google API）
-- auto-login 備援路徑：快取不存在時呼叫 `authenticate_oauth()`（會建立快取）
-- 登出時同時刪除 `google_token.json` 與 `google_user_cache.json`
+
+**本地模式：**
+- OAuth token 存於 `google_token.json`；email 快取於 `google_user_cache.json`
+- 快速路徑：從 `google_user_cache.json` 讀 email（不呼叫 Google API）
+- 備援路徑：快取不存在時呼叫 `authenticate_oauth()`（建立快取）
+- 登出時同時刪除兩個檔案
+
+**Cloud 模式（Streamlit Cloud）：**
+- Session state 每次重整都會清空，必須用其他機制保持登入
+- OAuth 登入成功後：產生隨機 session token → 存入 `cloud_sessions.json` → 寫入 URL `?session=TOKEN`
+- 重整時：URL 中的 `?session=TOKEN` 還在 → 從 `cloud_sessions.json` 讀出 creds/email → 還原 session state
+- 登出時：從 `cloud_sessions.json` 刪除該 token → `st.query_params.clear()`
+- 相關函式：`_save_cloud_session()`, `_load_cloud_session()`, `_delete_cloud_session()` 在 `ui.py`
+
+**共通：**
 - 登入後必須呼叫 `st.rerun()`，否則 `cfg` 仍指向匿名配置
 
 ### 資料

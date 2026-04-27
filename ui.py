@@ -4,6 +4,7 @@ UI模塊 ui.py
 使用 Streamlit 建構使用者介面
 """
 
+import os
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -11,6 +12,49 @@ from datetime import datetime, timedelta
 import config
 import data
 import google_drive
+
+# ── Cloud 模式 session 持久化（重整後保持登入）────────────────────────────────
+_CLOUD_SESSIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cloud_sessions.json")
+
+
+def _save_cloud_session(token, email, creds_dict):
+    import json as _j
+    sessions = {}
+    if os.path.exists(_CLOUD_SESSIONS_FILE):
+        try:
+            with open(_CLOUD_SESSIONS_FILE, "r", encoding="utf-8") as f:
+                sessions = _j.load(f)
+        except Exception:
+            pass
+    sessions[token] = {"email": email, "creds": creds_dict}
+    with open(_CLOUD_SESSIONS_FILE, "w", encoding="utf-8") as f:
+        _j.dump(sessions, f)
+
+
+def _load_cloud_session(token):
+    import json as _j
+    if not os.path.exists(_CLOUD_SESSIONS_FILE):
+        return None
+    try:
+        with open(_CLOUD_SESSIONS_FILE, "r", encoding="utf-8") as f:
+            sessions = _j.load(f)
+        return sessions.get(token)
+    except Exception:
+        return None
+
+
+def _delete_cloud_session(token):
+    import json as _j
+    if not os.path.exists(_CLOUD_SESSIONS_FILE):
+        return
+    try:
+        with open(_CLOUD_SESSIONS_FILE, "r", encoding="utf-8") as f:
+            sessions = _j.load(f)
+        sessions.pop(token, None)
+        with open(_CLOUD_SESSIONS_FILE, "w", encoding="utf-8") as f:
+            _j.dump(sessions, f)
+    except Exception:
+        pass
 
 
 def setup_page():
@@ -262,6 +306,23 @@ def _build_sparkline_svg(data_points, color, width=60, height=28):
 def render_market_indices(cfg):
     """渲染頂部即時指數區塊（含 Google 登入圖示）"""
 
+    # ── 雲端模式：從 URL session token 還原登入狀態（重整後保持登入）──────────
+    if _is_cloud_mode() and "google_client" not in st.session_state:
+        session_token = st.query_params.get("session", "")
+        if session_token:
+            session_data = _load_cloud_session(session_token)
+            if session_data:
+                try:
+                    creds = google_drive.credentials_from_dict(session_data["creds"])
+                    client = google_drive.make_gspread_client(creds)
+                    st.session_state.google_client = client
+                    st.session_state.google_email = session_data["email"]
+                    st.session_state.google_creds = session_data["creds"]
+                    st.rerun()
+                except Exception:
+                    _delete_cloud_session(session_token)
+                    st.query_params.clear()
+
     # ── 雲端模式：處理 Google OAuth callback（?code=xxx 回傳） ──────────
     if _is_cloud_mode() and "google_client" not in st.session_state:
         params = st.query_params
@@ -277,12 +338,17 @@ def render_market_indices(cfg):
                     )
                     client = google_drive.make_gspread_client(creds)
                     email = _fetch_google_email(creds)
+                import secrets as _sec
+                creds_dict = google_drive.credentials_to_dict(creds)
+                session_token = _sec.token_urlsafe(32)
+                _save_cloud_session(session_token, email, creds_dict)
                 st.session_state.google_client = client
                 st.session_state.google_email = email
-                st.session_state.google_creds = google_drive.credentials_to_dict(creds)
+                st.session_state.google_creds = creds_dict
                 st.session_state.pop("pending_auth_url", None)
                 st.session_state.pop("oauth_state", None)
                 st.query_params.clear()
+                st.query_params["session"] = session_token
                 st.rerun()
             except Exception as e:
                 st.error(f"Google 授權失敗：{e}")
@@ -329,6 +395,11 @@ def render_market_indices(cfg):
             if st.button("登出", key="google_logout_btn", use_container_width=True):
                 if not _is_cloud_mode():
                     google_drive.logout_oauth()
+                else:
+                    _token = st.query_params.get("session", "")
+                    if _token:
+                        _delete_cloud_session(_token)
+                    st.query_params.clear()
                 for k in list(st.session_state.keys()):
                     if k.startswith("gd_subfolders_"):
                         del st.session_state[k]

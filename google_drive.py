@@ -270,6 +270,13 @@ def credentials_to_dict(creds):
     return _json.loads(creds.to_json())
 
 
+def credentials_from_dict(creds_dict):
+    """從 dict 重建 OAuthCredentials（含 refresh_token，支援自動刷新）"""
+    if not OAUTH_AVAILABLE:
+        raise ImportError("請先安裝: pip install google-auth-oauthlib")
+    return OAuthCredentials.from_authorized_user_info(creds_dict, OAUTH_SCOPES)
+
+
 def make_gspread_client(creds):
     """從 credentials 建立 gspread.Client"""
     if not GSPREAD_AVAILABLE:
