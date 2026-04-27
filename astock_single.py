@@ -11,6 +11,16 @@ import data
 import ui
 
 
+@st.fragment(run_every=30)
+def _home_portfolio(cfg):
+    """首頁投資組合區塊：每 30 秒自動重新抓取最新報價並重繪"""
+    from datetime import datetime
+    portfolio = data.calculate_portfolio_value(cfg)
+    ui.render_net_value(portfolio)
+    ui.render_home_details(portfolio)
+    st.caption(f"⏱ 報價自動更新中，最後更新：{datetime.now().strftime('%H:%M:%S')}")
+
+
 def main():
     """程序主入口"""
     # 1. 頁面設定
@@ -41,12 +51,8 @@ def main():
             st.info("🔒 您目前處於未登入狀態。為了保護您的資產資料，本系統已實施帳號隔離。請點擊右上角「登入 Google」以載入專屬於您的投資組合。")
             return
             
-        # 計算並顯示總資產淨值與頂部卡片
-        portfolio = data.calculate_portfolio_value(cfg)
-        ui.render_net_value(portfolio)
-        
-        # 顯示首頁下方各分類詳細明細
-        ui.render_home_details(portfolio)
+        # 計算並顯示投資組合（每 30 秒自動刷新報價）
+        _home_portfolio(cfg)
 
     elif page == "⚙️ 操作面板":
         if not st.session_state.get("google_email"):
