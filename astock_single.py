@@ -14,8 +14,6 @@ import ui
 @st.fragment(run_every=30)
 def _home_portfolio(cfg):
     """首頁投資組合區塊：每 30 秒自動重新抓取最新報價並重繪"""
-    from datetime import datetime
-    st.caption(f"⏱ 報價自動更新中，最後更新：{datetime.now().strftime('%H:%M:%S')}")
     portfolio = data.calculate_portfolio_value(cfg)
     ui.render_net_value(portfolio)
     ui.render_home_details(portfolio)

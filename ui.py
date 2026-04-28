@@ -533,31 +533,10 @@ def render_net_value(portfolio):
             st.rerun()
             
     with col_refresh:
-        st.markdown('''
-            <style>
-            div[data-testid="stHorizontalBlock"]:nth-of-type(2) div[data-testid="column"]:nth-child(3) button {
-                border-radius: 20px !important;
-                border: 1px solid #d1d5db !important;
-                color: #888 !important;
-                background-color: transparent !important;
-                transition: all 0.2s;
-            }
-            div[data-testid="stHorizontalBlock"]:nth-of-type(2) div[data-testid="column"]:nth-child(3) button:hover {
-                border-color: #9ca3af !important;
-                color: #555 !important;
-                background-color: #f3f4f6 !important;
-            }
-            </style>
-        ''', unsafe_allow_html=True)
-        if st.button("↻ Refresh", help="重新整理報價", use_container_width=True):
-            data.clear_cache()
-            st.session_state['last_update'] = datetime.now()
-            st.rerun()
-            
-        last_update = st.session_state.get('last_update', datetime.now())
-        diff_mins = int((datetime.now() - last_update).total_seconds() / 60)
-        time_str = "剛剛更新" if diff_mins == 0 else f"{diff_mins} 分鐘前更新"
-        st.markdown(f'<div style="text-align:center; color:#888; font-size:0.8rem; margin-top:-10px;">{time_str}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="text-align:center; color:#888; font-size:0.8rem; padding-top:8px;">⏱ 最後更新<br>{datetime.now().strftime("%H:%M:%S")}</div>',
+            unsafe_allow_html=True,
+        )
 
     with col_val:
         def safe_val(v): return 0 if pd.isna(v) else v
